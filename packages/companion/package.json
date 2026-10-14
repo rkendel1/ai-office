@@ -12,6 +12,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node --no-warnings dist/cli.js start",
+    "pair": "node --no-warnings dist/cli.js pair",
+    "clients": "node --no-warnings dist/cli.js clients",
     "dev": "tsc -p tsconfig.json && node --no-warnings dist/cli.js start --dev"
   },
   "dependencies": {

@@ -156,6 +156,7 @@ export class AgentRuntime {
     const userRejected = new Set<string>();
     let charsSent = 0;
     let modelCalls = 0;
+    let nudges = 0;
     const spec = opts.specialist;
     const taskContext = new Map<string, ContextItem>();
     const limitations: string[] = [];
@@ -318,6 +319,23 @@ export class AgentRuntime {
             transcript.push(
               { role: "assistant", content: res.message.content },
               { role: "user", content: "Your capability call was not valid JSON. Reply with a single valid ```tool block, or answer without one." },
+            );
+            continue;
+          }
+          // Local models sometimes return nothing, or narrate instead of acting. A specialist that
+          // must plan first and has not yet done so gets a nudge rather than ending the task empty-handed.
+          const reply = parsed.text.trim();
+          const planPending = planRequired && !actions.some((a) => a.capability === "plan.propose" && a.status === "succeeded");
+          if (nudges < 2 && (!reply || (planPending && !/\?\s*$/.test(reply)))) {
+            nudges++;
+            transcript.push(
+              { role: "assistant", content: res.message.content || "(no reply)" },
+              {
+                role: "user",
+                content: planPending
+                  ? "You have not proposed a plan yet. Reply with a single capability call (plan.propose) containing your design, or ask one clarifying question."
+                  : "Your reply was empty. Reply with a single capability call, or answer the request in plain text.",
+              },
             );
             continue;
           }

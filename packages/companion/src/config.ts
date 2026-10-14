@@ -55,8 +55,8 @@ export function loadConfig(overrides: Partial<CompanionConfig> = {}): CompanionC
     allowRemoteOllama: overrides.allowRemoteOllama ?? fromFile.allowRemoteOllama ?? false,
     allowedOrigins: overrides.allowedOrigins ??
       fromFile.allowedOrigins ?? [`https://localhost:${port}`, "https://localhost:3000"],
-    tlsCertPath: overrides.tlsCertPath ?? fromFile.tlsCertPath ?? existing(path.join(devCerts, "localhost.crt")),
-    tlsKeyPath: overrides.tlsKeyPath ?? fromFile.tlsKeyPath ?? existing(path.join(devCerts, "localhost.key")),
+    tlsCertPath: "tlsCertPath" in overrides ? overrides.tlsCertPath : (fromFile.tlsCertPath ?? existing(path.join(devCerts, "localhost.crt"))),
+    tlsKeyPath: "tlsKeyPath" in overrides ? overrides.tlsKeyPath : (fromFile.tlsKeyPath ?? existing(path.join(devCerts, "localhost.key"))),
     staticDir: overrides.staticDir ?? fromFile.staticDir,
     maxBodyBytes: overrides.maxBodyBytes ?? fromFile.maxBodyBytes ?? 4 * 1024 * 1024,
     dbPath: overrides.dbPath ?? fromFile.dbPath ?? path.join(home, "companion.db"),

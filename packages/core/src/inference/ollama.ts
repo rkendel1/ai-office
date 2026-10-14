@@ -106,6 +106,13 @@ export class OllamaProvider implements InferenceProvider {
     } catch (e) {
       if (timedOut) throw new InferenceError("timeout", `Request to the local model timed out after ${Math.round(timeoutMs / 1000)}s`);
       if (signal?.aborted) throw new InferenceError("aborted", "Request cancelled");
+      // Office on Mac loads the pane over HTTPS; WebKit blocks it from calling plain-HTTP Ollama and reports a bare "Load failed".
+      const page = (globalThis as { location?: { protocol?: string } }).location;
+      if (page?.protocol === "https:" && this.base.startsWith("http:"))
+        throw new InferenceError(
+          "unreachable",
+          `This pane is served over HTTPS, and Office (especially on Mac) usually blocks it from calling Ollama at ${this.base} directly, even though Ollama is running. Switch Connection to "Companion (recommended)", which relays to Ollama for you. (${(e as Error).message})`,
+        );
       throw new InferenceError("unreachable", `Cannot reach Ollama at ${this.base}. Is it running? (${(e as Error).message})`);
     } finally {
       clearTimeout(timer);
