@@ -241,6 +241,11 @@ describe("evidence helpers", () => {
     expect(nums).toEqual(["1,250", "12.5%", "$4.2M"]);
   });
 
+  it("does not skip numbers after ordinary words ending in reference letters", () => {
+    expect(numbersInText("North led with 150, and growth hit 37.5% in the month 12").map((n) => n.raw)).toEqual(["150", "37.5%", "12"]);
+    expect(numbersInText("See slide 14, paragraph 22, row 120 and ¶ 31.").map((n) => n.raw)).toEqual([]);
+  });
+
   it("matches rounded and scaled values to evidence", () => {
     expect(ungroundedNumbers("Total 1,250 (12.5%), revenue $4.2M, mean 33.3", [1250, 0.125, 4_210_000, 33.333])).toEqual([]);
     expect(ungroundedNumbers("Total 1,300", [1250])).toEqual(["1,300"]);

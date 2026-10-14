@@ -37,6 +37,7 @@ export function App({ host }: { host: HostInfo }) {
   const getProvider = useCallback(() => createProvider(settingsRef.current, companionRef.current), []);
   const getSettings = useCallback(() => settingsRef.current, []);
   const a = useAssistant(host, getProvider, getSettings, history);
+  const sharing = settings.transport === "companion" && companion.paired && conn.state === "ok";
   const busy = !IDLE.includes(a.state);
 
   const setSettings = useCallback((s: AssistantSettings) => setSettingsState(saveSettings(s)), []);
@@ -92,8 +93,8 @@ export function App({ host }: { host: HostInfo }) {
         ))}
       </nav>
       <main className="content">
-        {tab === "chat" && <ChatView a={a} busy={busy} settings={settings} conn={conn} onOpenSettings={() => setTab("settings")} />}
-        {tab === "context" && <ContextView a={a} host={host} />}
+        {tab === "chat" && <ChatView a={a} busy={busy} settings={settings} conn={conn} onOpenSettings={() => setTab("settings")} companion={companion} sharing={sharing} />}
+        {tab === "context" && <ContextView a={a} host={host} companion={companion} sharing={sharing} />}
         {tab === "actions" && <ActionsView a={a} />}
         {tab === "history" && <HistoryView history={history} settings={settings} />}
         {tab === "settings" && (

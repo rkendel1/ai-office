@@ -36,6 +36,12 @@ export interface AssistantSettings {
   historyStoreFullArgs: boolean;
   /** Use native tool calling when the model reports support. */
   preferNativeTools: boolean;
+  /**
+   * Allow the user to approve a plan as a bounded batch: declared operations
+   * inside their scope then run without individual prompts (operations that
+   * policy marks "confirm" still ask). Off = every change is approved separately.
+   */
+  planBatchApproval: boolean;
 }
 
 export const DEFAULT_SETTINGS: AssistantSettings = {
@@ -59,6 +65,7 @@ export const DEFAULT_SETTINGS: AssistantSettings = {
   historyRetentionDays: 30,
   historyStoreFullArgs: false,
   preferNativeTools: true,
+  planBatchApproval: true,
 };
 
 function num(v: unknown, fallback: number, min: number, max: number): number {
@@ -98,5 +105,6 @@ export function normalizeSettings(raw: unknown): AssistantSettings {
     historyRetentionDays: num(r.historyRetentionDays, d.historyRetentionDays, 0, 3650),
     historyStoreFullArgs: r.historyStoreFullArgs === true,
     preferNativeTools: r.preferNativeTools !== false,
+    planBatchApproval: r.planBatchApproval !== false,
   };
 }

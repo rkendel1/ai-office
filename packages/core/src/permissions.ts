@@ -1,4 +1,4 @@
-import type { ActionPreview, PolicyDecision, RiskClass } from "./types.js";
+import type { ActionPreview, Json, PolicyDecision, RiskClass } from "./types.js";
 
 /** Per-risk-class decision. See spec FR-07. */
 export type ApprovalPolicy = Record<RiskClass, PolicyDecision>;
@@ -54,11 +54,23 @@ export interface ApprovalRequest {
   risk: RiskClass;
   decision: "approve" | "confirm";
   preview: ActionPreview;
+  /** Validated arguments of the call being approved (used for plan-scope matching; not shown raw). */
+  args?: Record<string, Json>;
+  /**
+   * Present on plan approvals when bounded batch execution can be offered:
+   * how many declared operations could run without further prompts and how
+   * many will still ask because policy requires confirmation.
+   */
+  planBatch?: { operations: number; autoEligible: number; alwaysAsk: number };
 }
 
 export interface ApprovalResponse {
   approved: boolean;
   reason?: string;
+  /** For plan approvals: the user chose bounded batch execution of the declared operations. */
+  batch?: boolean;
+  /** Set by the runtime when a declared plan operation was covered by an approved batch plan. */
+  via?: "plan";
 }
 
 /**

@@ -31,8 +31,12 @@
 - Allowlists only narrow: the runtime intersects them with the host's registered capabilities and passes the set to the registry, which rejects anything outside it. Internal capabilities in an allowlist, or modifying capabilities in a read-only specialist, are configuration errors that stop the session from starting.
 - A specialist's policy is merged with `tightenPolicy`, which can only make decisions stricter.
 - Routing is computed from the user's text, the host and the user's explicit choice only; there is no capability for selecting or switching specialists, so neither the model nor document content can do it. Specialists for another host are rejected by both the router and the runtime.
-- `plan.propose` always asks the user (even if edits are set to auto-apply) and grants nothing: each change is still approved per policy.
+- `plan.propose` always asks the user (even if edits are set to auto-apply). By default it grants nothing: each change is still approved per policy.
+- **Bounded plan execution** (`specialists/shared/plan-scope.ts`). Only when the user picks *Approve plan and run N changes* (and the *batch approval* setting is on) do declared operations run without individual prompts, and only inside their declared scope: the same capability, the declared sheet and range (containment), the declared slide title (slides created in this task), the declared Word position or paragraphs, and at most the declared count. Operations are validated before the plan is shown: unknown, internal, read-only, outside-the-allowlist or unscoped operations are refused. Any undeclared change, failed, unverified or partial result, or scope change **suspends** the batch, and every later change asks again. Policy `confirm` decisions (destructive, send, external) always ask. The report lists each declared operation as done / failed / unverified / partial / rejected / not run, plus any undeclared changes.
+- **Cross-app sources** (`core/src/sources.ts`, `companion/src/sources.ts`). Content moves between Office apps only when the user presses *Share* in the source app (a read through the normal registry path with `origin: "user"`) and then attaches it to a task in the target app. Shared content is read-only, carries provenance (app, document, scope, time) into the model's fenced context, is held in the companion's memory only (never written to disk or history), expires after 30 minutes, and can be removed at any time. No capability lets the model or a document read another app or request a source.
 - Completion criteria are checked against records and host snapshots, so a model claiming success cannot make a task "completed".
+
+**Evaluation harness** (`core/src/evals`, `companion/src/evals.ts`). `loai-companion eval` refuses any non-loopback Ollama URL before sending a request, whatever `allowRemoteOllama` says, never downloads models, and runs cases against in-memory fixtures only.
 
 **Stale-edit guards** — Word paragraph replacement requires `expectedText`; PowerPoint accepts it; mismatches refuse the edit.
 
@@ -55,11 +59,27 @@
 
 ## Tests that cover this
 
+- `core/test/invariants.test.ts` — release gates, one per product invariant (below).
+- `core/test/plan-scope.test.ts` — batch approval covers only declared operations in scope; suspension on undeclared, failed, unverified or out-of-scope changes; per-operation report.
+- `core/test/sources.test.ts`, `companion/test/companion.test.ts` (sources) — sources need explicit attachment, are fenced with provenance, expire, are memory-only, and cannot be requested by the model.
+- `companion/test/evals.test.ts` — the evaluation CLI refuses remote endpoints and never pulls models.
 - `core/test/security.test.ts` — injected documents/emails; an obedient model attempting shell, network, internal deletes, fake approval flags, extra recipients, send.
 - `core/test/specialists.security.test.ts` — specialist policy/instructions cannot skip approval; allowlists cannot add cross-host, internal or unregistered capabilities; injected text cannot switch specialists, grant capabilities or approve plans; rejected plans block changes; unverified results are not reported as complete.
 - `core/test/unit.test.ts` — policy floors, schema rejection, fencing/escaping.
 - `core/test/ollama.test.ts` — remote endpoints refused; a full task contacts only loopback URLs and does not fall back on failure.
 - `companion/test/companion.test.ts` — loopback binding, token/Origin/Host checks, pairing lockout, admin separation, endpoint allowlist, size limits, traversal.
+
+## Product invariants and their gates
+
+| Invariant | Gate (`core/test/invariants.test.ts`) plus deeper coverage |
+|---|---|
+| "No account, subscription, or cloud AI dependency." | No hosted-AI, auth or billing package in any `package.json`; every URL literal in source is loopback (or a documentation link) |
+| "Inference remains local through the configured Ollama endpoint." | Provider refuses remote URLs without opt-in; every provider request goes to the base URL; the runtime makes no network calls of its own (`fetch` stubbed to throw while all evaluation cases run); `ollama.test.ts` privacy test |
+| "No email sending, shell execution, arbitrary code execution, filesystem access, or unrestricted network access through the assistant." | No capability on any host has `send` risk or a send/exec/file/network name; core and add-in import no process, filesystem or socket module and never evaluate code; invented capabilities are rejected; `security.test.ts` |
+| "Specialists cannot add capabilities, loosen approval policy, or cross application boundaries without explicit authorization." | Every specialist capability exists on its own host and is not internal; every specialist policy only tightens; the router rejects other-host specialists; `specialists.security.test.ts`, `plan-scope.test.ts`, `sources.test.ts` |
+| "Model output is a proposal, not proof of execution or success." | A model claiming success without acting does not complete the task; text imitating a tool result changes nothing; evaluation *honest reporting* metric |
+| "Verification must inspect actual application state wherever the host API permits it." | A modifying capability without read-back is never `succeeded`; every change in the evaluation suite carries a verification method |
+| "Existing generic-assistant behavior remains available." | Every host routes unmatched requests and an explicit choice to the general assistant, which is offered every model-visible capability |
 
 ## Reporting
 

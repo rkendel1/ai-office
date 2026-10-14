@@ -25,9 +25,9 @@ export const slideDesigner: Specialist = {
     "2. Use a consistent design system: titles 32–36pt bold, body 18–24pt, left-aligned body, consistent margins (48pt).",
     "3. Fix with presentation.format_text, presentation.set_geometry, and — only to reduce density — presentation.edit_text with expectedText set to the current text. Keep all numbers, names and qualifications.",
     "4. Change only the slides in scope. Do not delete content.",
-    "5. Run presentation.check_layout again and report what improved and what could not be checked (rendering is not visible to you).",
+    "5. Run presentation.check_layout again, and presentation.check_rendering where supported; report what improved and what could not be checked.",
   ].join("\n"),
-  capabilities: ["context.read", "presentation.read_slides", "presentation.check_layout", "presentation.format_text", "presentation.set_geometry", "presentation.edit_text", "presentation.add_shape", "presentation.add_text_box"],
+  capabilities: ["context.read", "presentation.read_slides", "presentation.check_layout", "presentation.check_rendering", "presentation.format_text", "presentation.set_geometry", "presentation.edit_text", "presentation.add_shape", "presentation.add_text_box"],
   constraints: { readOnly: false, rules: ["Keeps wording meaning and all numbers", "Text edits must quote the current text", "No content is deleted"] },
   approval: { summary: "Each formatting, position or text change is shown for approval." },
   completion: [

@@ -7,6 +7,7 @@ import { formatRange, parseRange, rangeSize } from "../hosts/a1.js";
 import type { CellValue, ChartKind, ExcelDriver, RangeData, SheetInfo, TableInfo } from "../hosts/excel.js";
 import type { MailItem, OutlookDriver } from "../hosts/outlook.js";
 import type { Box, PowerPointDriver, PptShape, PptSlide, ShapeKind, TextFormat } from "../hosts/powerpoint.js";
+import { simulateRender, type RenderedImage } from "../hosts/powerpoint-qa.js";
 import type { WordDriver, WordParagraph, WordStyle } from "../hosts/word.js";
 import type { ChatRequest, ChatResponse, InferenceProvider, ModelDetails, ModelInfo, ToolCall } from "../types.js";
 import { newId } from "../util.js";
@@ -273,6 +274,9 @@ export class FakePowerPointDriver implements PowerPointDriver {
   selected: string[] | null = [];
   notesSupported = true;
   tablesSupported = true;
+  renderingSupported = true;
+  /** Optional override: render a slide to a custom image (tests of real-render analysis). */
+  renderOverride?: (slide: PptSlide) => RenderedImage;
   size = { width: 960, height: 540 };
   private next = 1000;
   readonly layoutList = [
@@ -283,13 +287,14 @@ export class FakePowerPointDriver implements PowerPointDriver {
     { id: "L5", name: "Blank", masterId: "M1" },
   ];
 
-  constructor(slides: { shapes: FakeShapeInit[]; notes?: string }[], public title = "Deck.pptx") {
+  constructor(slides: { shapes: FakeShapeInit[]; notes?: string; layoutName?: string }[], public title = "Deck.pptx") {
     this.slidesList = slides.map((s, i) => {
       const id = `s${i + 1}`;
       if (s.notes) this.notes.set(id, s.notes);
       return {
         id,
         index: i,
+        layoutName: s.layoutName,
         shapes: s.shapes.map((sh, j) => ({
           id: `s${i + 1}sh${j + 1}`,
           name: sh.name,
@@ -333,7 +338,7 @@ export class FakePowerPointDriver implements PowerPointDriver {
     if (name === "Title Only") shapes.push(ph("Title 1", { left: 48, top: 30, width: 864, height: 90 }, 36));
     if (name === "Two Content")
       shapes.push(ph("Title 1", { left: 48, top: 30, width: 864, height: 90 }, 36), ph("Content Placeholder 2", { left: 48, top: 135, width: 420, height: 360 }, 24), ph("Content Placeholder 3", { left: 492, top: 135, width: 420, height: 360 }, 24));
-    this.slidesList.push({ id, index: this.slidesList.length, shapes });
+    this.slidesList.push({ id, index: this.slidesList.length, shapes, layoutName: name });
     return id;
   }
   async addTextBox(slideId: string, text: string, box: Box, format?: TextFormat) {
@@ -387,6 +392,13 @@ export class FakePowerPointDriver implements PowerPointDriver {
   }
   async setNotes(slideId: string, text: string) {
     this.notes.set(slideId, text);
+  }
+  supportsRendering() {
+    return this.renderingSupported;
+  }
+  async renderSlide(slideId: string, widthPx: number) {
+    const s = this.slide(slideId);
+    return this.renderOverride ? this.renderOverride(s) : simulateRender(s, this.size, widthPx);
   }
 }
 

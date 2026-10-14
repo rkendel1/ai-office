@@ -1,4 +1,4 @@
-import type { AssistantSettings, HistoryStore, TaskRecord } from "@loai/core";
+import type { AssistantSettings, HistoryStore, SharedSource, SourceCapture, SourceSummary, TaskRecord } from "@loai/core";
 
 const TOKEN_KEY = "loai.companionToken";
 
@@ -45,7 +45,7 @@ export class CompanionClient {
     return t ? { authorization: `Bearer ${t}` } : {};
   }
 
-  private async call<T>(path: string, init: RequestInit = {}): Promise<T> {
+  async call<T>(path: string, init: RequestInit = {}): Promise<T> {
     let res: Response;
     try {
       res = await fetch(this.baseUrl + path, {
@@ -113,6 +113,23 @@ export class CompanionClient {
         onProgress(m.status ?? "", m.total ? Math.round((100 * (m.completed ?? 0)) / m.total) : undefined);
       }
     }
+  }
+
+  /** Share content the user confirmed. Held in companion memory only, for a limited time. */
+  shareSource(c: SourceCapture) {
+    return this.call<SourceSummary>("/v1/sources", { method: "POST", body: JSON.stringify(c) });
+  }
+
+  async listSources(): Promise<SourceSummary[]> {
+    return (await this.call<{ sources: SourceSummary[] }>("/v1/sources")).sources;
+  }
+
+  getSource(id: string) {
+    return this.call<SharedSource>(`/v1/sources/${encodeURIComponent(id)}`);
+  }
+
+  deleteSource(id: string) {
+    return this.call(`/v1/sources/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
   history(): HistoryStore {

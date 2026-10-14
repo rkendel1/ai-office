@@ -123,7 +123,7 @@ describe("approvals and honest outcomes under specialists", () => {
   it("rejected plan → no changes; nothing is reported as complete", async () => {
     const ppt = new FakePowerPointDriver([]);
     const model = new ScriptedProvider([
-      call("plan.propose", { title: "Deck", steps: [{ title: "One" }, { title: "Two" }] }),
+      call("plan.propose", { outcome: "Test outcome", target: "The open file", title: "Deck", steps: [{ title: "One" }, { title: "Two" }] }),
       call("presentation.create_slide", { title: "One" }),
       { text: "Created the deck!" },
     ]);
@@ -137,7 +137,7 @@ describe("approvals and honest outcomes under specialists", () => {
 
   it("plan approval is not approval of changes", async () => {
     const ppt = new FakePowerPointDriver([]);
-    const model = new ScriptedProvider([call("plan.propose", { title: "Deck", steps: [{ title: "One" }] }), call("presentation.create_slide", { title: "One" }), { text: "ok" }]);
+    const model = new ScriptedProvider([call("plan.propose", { outcome: "Test outcome", target: "The open file", title: "Deck", steps: [{ title: "One" }] }), call("presentation.create_slide", { title: "One" }), { text: "ok" }]);
     const s = setup(new PowerPointAdapter(ppt), model, { approve: (q) => q.capability === "plan.propose" });
     await s.runtime.run("Create a 1-slide deck", { specialist: s.specialists.get("powerpoint.author")! });
     expect(s.approver.requests.map((q) => q.capability)).toEqual(["plan.propose", "presentation.create_slide"]);
@@ -145,7 +145,7 @@ describe("approvals and honest outcomes under specialists", () => {
   });
 
   it("plan.propose always asks, even if the user allows edits without preview", async () => {
-    const s = setup(new WordAdapter(new FakeWordDriver(["a"])), new ScriptedProvider([call("plan.propose", { title: "t", steps: [{ title: "s" }] }), { text: "ok" }]), {
+    const s = setup(new WordAdapter(new FakeWordDriver(["a"])), new ScriptedProvider([call("plan.propose", { outcome: "Test outcome", target: "The open file", title: "t", steps: [{ title: "s" }] }), { text: "ok" }]), {
       settings: { policy: { ...DEFAULT_POLICY, modify: "allow" } },
     });
     await s.runtime.run("x");

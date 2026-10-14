@@ -24,6 +24,7 @@ export async function startFakeOllama(opts: FakeOllamaOptions = {}) {
     };
     const models = opts.models ?? ["llama3.1:8b"];
     if (req.url === "/api/version") return json(200, { version: "0.12.0" });
+    if (req.url === "/api/ps") return json(200, { models: models.slice(0, 1).map((m) => ({ name: m, model: m, size: 5_200_000_000, size_vram: 0 })) });
     if (req.url === "/api/tags")
       return json(200, { models: models.map((m) => ({ name: m, model: m, size: 4_700_000_000, details: { family: "llama", parameter_size: "8B", quantization_level: "Q4_K_M" } })) });
     if (req.url === "/api/show") {

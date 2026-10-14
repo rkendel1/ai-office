@@ -49,6 +49,9 @@ for (const f of ["install.sh", "install.ps1", "uninstall.sh", "uninstall.ps1"]) 
 fs.chmodSync(path.join(out, "install.sh"), 0o755);
 fs.chmodSync(path.join(out, "uninstall.sh"), 0o755);
 fs.copyFileSync(path.join(root, "README.md"), path.join(out, "README.md"));
+// Docs (verification levels, limitations, acceptance and evaluation procedures) and the Outlook acceptance fixture.
+copy("docs", "docs");
+copy("acceptance/fixtures", "acceptance/fixtures");
 fs.writeFileSync(path.join(out, "VERSION"), pkg.version + "\n");
 
 // Checksums over every file (sorted, relative paths).

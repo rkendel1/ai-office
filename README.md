@@ -28,18 +28,22 @@ Each specialist narrows the capabilities available, gathers the context it needs
 |---|---|---|---|
 | **Word** | selection, paragraphs (chunked), search, structure | replace selection/paragraphs, insert paragraphs, styles/bold/italic | re-reading the affected paragraphs |
 | **Excel** | sheets, used ranges, tables, selection, values + formulas; application-computed statistics and data profiles | write values/formulas, add sheet, cleaned copy to a new sheet, create table, filter, create chart | re-reading cells / listing tables & charts; row-count and source-unchanged checks |
-| **PowerPoint** | slides, shapes, positions, formatting, selected slides | slides from layouts, text boxes, shapes, diagrams, bar charts (editable shapes), tables, formatting, geometry, text edits | re-reading slide objects; object-level layout check (not the rendered slide) |
+| **PowerPoint** | slides, shapes, positions, formatting, selected slides | slides from layouts, text boxes, shapes, diagrams, bar charts (editable shapes), tables, formatting, geometry, text edits | re-reading slide objects; object-level layout check; rendered-slide check where PowerPointApi 1.8 allows it (otherwise reported as *unsupported*) |
 | **Outlook** | open message and quoted thread | reply draft (read mode) or insert into compose body | re-reading the compose body; reply windows are reported *unverified* because Office cannot read them back |
+
+**Plans run within what you approved.** A plan lists every change it will make and where. Approve it for review, or as a bounded batch: declared changes inside their scope then run without further prompts, and anything outside the plan stops the batch and asks you. Destructive changes always ask.
+
+**Content can move between apps only when you share it.** Press *Share* in Word, Excel or Outlook, then attach it to a task in another app. Shared content is read-only, labelled with where it came from, held only in the companion's memory, and expires after 30 minutes.
 
 The assistant **cannot send email**, run code, use the shell, read files, or reach the network. Those capabilities do not exist in the registry, so neither a model nor a document can invoke them.
 
 ## Quick start (development)
 
-Requirements: Node.js ≥ 22.13, Ollama with at least one model (`ollama pull qwen2.5:7b` — any model works; tool-calling models work best), and Office desktop for live use.
+Requirements: Node.js ≥ 22.13, Ollama with at least one model (for example `ollama pull qwen2.5:7b`; any model can be selected, and none has been evaluated yet — see [docs/model-compatibility.md](docs/model-compatibility.md)), and Office desktop for live use.
 
 ```bash
 npm install
-npm test                     # 223 automated tests (unit, integration, end-to-end, specialists, security, privacy, UI)
+npm test                     # 352 automated tests (unit, integration, specialists, security, invariant gates, acceptance scenarios on mocked hosts, evaluation harness, UI)
 npm run build                # core + companion + add-in + manifests
 
 npm run certs -w @loai/addin # once: trusted https://localhost certificate for Office
@@ -55,10 +59,10 @@ Sideload `packages/addin/dist/manifest.xml` into Word/Excel/PowerPoint ([Windows
 ```bash
 node scripts/release-keys.mjs                       # once; keep keys/release-private.pem secret
 LOAI_SIGNING_KEY=keys/release-private.pem npm run package
-node scripts/verify-release.mjs release/local-office-ai-0.1.0 keys/release-public.pem
+node scripts/verify-release.mjs release/local-office-ai-0.3.0 keys/release-public.pem
 ```
 
-Users extract the release and run `./install.sh` (macOS) or `install.ps1` (Windows). The installer verifies checksums, installs the app, creates the localhost certificate, registers the add-in with Word/Excel/PowerPoint, and starts the companion at login. `loai-companion pair` prints a pairing code.
+See [docs/release.md](docs/release.md) for the full procedure: gates, key handling, signing and verification. Users extract the release and run `./install.sh` (macOS) or `install.ps1` (Windows). The installer verifies checksums, installs the app, creates the localhost certificate, registers the add-in with Word/Excel/PowerPoint, and starts the companion at login. `loai-companion pair` prints a pairing code.
 
 ## Repository layout
 
@@ -70,9 +74,14 @@ packages/core        Domain logic, no Office/DOM dependency — fully unit-testa
   src/context.ts       context budgeting, provenance, freshness, untrusted-content fencing
   src/inference/       Ollama adapter (streaming, native tools) + text tool protocol fallback
   src/hosts/           Word / Excel / PowerPoint / Outlook adapters over driver interfaces
+  src/specialists/     the 14 specialists, router, plans and plan scope, completion criteria
+  src/acceptance/      live Office acceptance scenarios and runner (records live vs mocked)
+  src/evals/           real-model evaluation cases, scoring, runner and reports
   src/testing/         in-memory Office hosts and a scripted model
 packages/companion   Loopback HTTPS service: pairing auth, Ollama allowlist proxy, SQLite history, CLI
 packages/addin       React task pane, Office.js drivers, manifests
+acceptance/          Outlook fixture and committed live acceptance records
+evals/results/       committed real-model evaluation runs
 installer/           install/uninstall scripts for macOS and Windows
 scripts/             manifest generation, release packaging, signing, verification
 docs/                architecture, security, compatibility matrix, testing, troubleshooting
@@ -83,10 +92,25 @@ docs/                architecture, security, compatibility matrix, testing, trou
 - [Architecture](docs/architecture.md) — components, request flow, the proposal/execution boundary
 - [Specialists](docs/specialists.md) — the 14 specialists, routing, guarantees and the capabilities they use
 - [Security and privacy](docs/security.md) — threat model and how each safeguard is enforced and tested
-- [Compatibility matrix](docs/compatibility.md) — hosts, platforms, API sets, models
-- [Testing](docs/testing.md) — automated suites and the manual Office acceptance checklist
+- [Compatibility matrix](docs/compatibility.md) — hosts, platforms, API sets
+- [Model compatibility](docs/model-compatibility.md) — the evaluation harness and the models actually evaluated (none yet)
+- [Testing](docs/testing.md) — automated suites, mocked vs live vs rendered verification, the manual checklist
+- [Live Office acceptance](docs/acceptance.md) — repeatable scenarios and recorded results
+- [Known limitations](docs/limitations.md) — what Office.js does not allow, and what is not yet verified
+- [Release procedure](docs/release.md) — gates, signing and verification
 - [Troubleshooting](docs/troubleshooting.md)
 
 ## Status
 
-Version 0.2.0. All automated suites pass, including the spec's acceptance scenarios run against in-memory Office hosts and an HTTP Ollama stand-in, and a UI test that drives the real task pane. The Office.js drivers compile against the official type definitions but **have not yet been exercised inside live Office applications** — this includes every specialist workflow and the new PowerPoint construction capabilities — run the manual checklist in [docs/testing.md](docs/testing.md) on each platform in the compatibility matrix before calling a release production-ready.
+Version 0.3.0.
+
+| Verification | State |
+|---|---|
+| Automated tests, type checks, builds, release signing and checksum verification | Pass |
+| Product invariants | Gated by `core/test/invariants.test.ts` on every test run |
+| Acceptance scenarios on **mocked** (in-memory) Office hosts | All 7 pass |
+| Acceptance scenarios in **live** Office | **Not run yet.** The Office.js drivers compile against the official type definitions but have not been exercised inside real Office applications |
+| **Rendered** slide checks | Implemented for PowerPointApi 1.8; tested on synthetic renders only |
+| **Real-model** evaluation | **No model evaluated yet.** The harness is tested against reference scripts and an Ollama stand-in |
+
+Before calling a release production-ready, run the [acceptance suite](docs/acceptance.md) in each Office build and the [evaluation harness](docs/model-compatibility.md) with the models you intend to support, and commit the records. [docs/limitations.md](docs/limitations.md) lists what remains unsupported or unverified.

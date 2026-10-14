@@ -2,7 +2,7 @@ import { isApprovedPlan, planFrom } from "../shared/planning.js";
 import { REQUIRE } from "../shared/requirements.js";
 import type { Specialist, TaskEvidence } from "../types.js";
 import { preservesUnrelatedContent } from "../shared/completion.js";
-import { layoutCheckedAfterChanges, onlyNewSlides, reportsLayoutIssues } from "./shared.js";
+import { layoutCheckedAfterChanges, noRenderingClaims, onlyNewSlides, renderingAccounted, reportsLayoutIssues } from "./shared.js";
 
 /** Slide count the user asked for ("10-slide", "ten slides"), if any. */
 export function requestedSlideCount(request: string): number | undefined {
@@ -30,17 +30,18 @@ export const presentationAuthor: Specialist = {
   instructions: [
     "You are the Presentation Author. You produce an actual, editable PowerPoint presentation — never just an outline in chat.",
     "1. Clarify audience, purpose and length only if they are missing AND matter; otherwise state your assumptions in the plan.",
-    "2. Source material is the request text and the open deck. You cannot open Word documents or workbooks; if the user refers to one, ask them to paste the relevant text, and use only facts they provided. Do not invent figures — use placeholders like \"[figure to confirm]\".",
-    "3. Develop a narrative arc, then call plan.propose with one step per slide: title as the step title, and in detail the key message, content and visual (bullets / process diagram / bar chart / table).",
+    "2. Source material is the request text, the open deck, and any content the user shared from another Office app and attached (OFFICE_CONTENT items with from_app). Use attached content as the primary source and cite it. You cannot open other documents yourself: if the user refers to one that is not attached, ask them to share its selection from that app (Share selection in its task pane) or paste it. Do not invent figures — use placeholders like \"[figure to confirm]\".",
+    "3. Develop a narrative arc, then call plan.propose with one step per slide (title, key message, content and visual), the outcome, the target (this presentation, new slides at the end), risks, and `operations`: one presentation.create_slide per slide with scope {slideTitle}, plus each visual (add_diagram / add_bar_chart / add_table) with scope {slideTitle} of the slide it goes on. Use exactly these titles when creating the slides.",
     "4. After approval, call presentation.list_layouts once, then create each slide with presentation.create_slide (title, 3–5 concise bullets of ≤12 words, speaker notes when useful). Use a \"Title Slide\" layout with a subtitle for the opening slide.",
     "5. Add visuals where the plan calls for them: presentation.add_diagram for processes/roadmaps, presentation.add_bar_chart only with numbers from the source, presentation.add_table for comparisons. Do not put a diagram on a slide that already has long bullets; use the \"Title Only\" layout for visual slides.",
-    "6. When all slides exist, run presentation.check_layout. Fix high-severity issues you can (shorten text with presentation.edit_text, move/resize with presentation.set_geometry), check again, and report anything that remains, including speaker notes that could not be added.",
+    "6. When all slides exist, run presentation.check_layout (object level) and presentation.check_rendering (rendered pixels, where supported). Fix high-severity issues you can (shorten text with presentation.edit_text, move/resize with presentation.set_geometry), check again, and report anything that remains, including speaker notes that could not be added. If check_rendering reports \"unsupported\", say the slides were not visually checked.",
   ].join("\n"),
   capabilities: [
     "context.read",
     "presentation.read_slides",
     "presentation.list_layouts",
     "presentation.check_layout",
+    "presentation.check_rendering",
     "plan.propose",
     "presentation.create_slide",
     "presentation.add_text_box",
@@ -87,6 +88,8 @@ export const presentationAuthor: Specialist = {
     },
     layoutCheckedAfterChanges(),
     reportsLayoutIssues,
+    renderingAccounted,
+    noRenderingClaims,
     {
       id: "notes-limitation-reported",
       description: "Speaker notes that could not be added are reported",
@@ -100,14 +103,14 @@ export const presentationAuthor: Specialist = {
     },
     preservesUnrelatedContent(),
   ],
-  verification: ["Existing slides are compared before and after", "Each slide is re-read after creation (title, bullets, notes where supported)", "Charts are checked for correct labels and proportional bar heights", "A layout check inspects text fit, overlaps and off-slide shapes (objects only, not the rendered slide)"],
+  verification: ["Existing slides are compared before and after", "Each slide is re-read after creation (title, bullets, notes where supported)", "Charts are checked for correct labels and proportional bar heights", "A layout check inspects text fit, overlaps and off-slide shapes at object level", "Where PowerPoint supports it, slides are rendered and the pixels checked for text overflow and missing text"],
   artifacts: ["Editable slides in the open presentation", "An approved slide plan", "Speaker notes where the host supports them"],
   limitations: [
-    "Cannot read Word documents or workbooks from PowerPoint; paste source text into the request",
+    "Cannot open Word documents or workbooks itself: share the selection from Word or Excel (via the companion) or paste it",
     "Charts are drawn with editable shapes, not native chart objects",
     "Speaker notes depend on host support (not available through Office.js today)",
     "Themes, images and animations are not created",
-    "Visual rendering is not inspected; only slide objects are checked",
+    "Rendered-slide checks need PowerPointApi 1.8; elsewhere only slide objects are checked and the answer says so",
   ],
   routing: {
     patterns: [

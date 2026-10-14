@@ -10,7 +10,7 @@ Start with **Settings ▸ Run diagnostics** in the task pane. It tests Ollama, l
 | "Model … is not installed" | Selected model removed | Pick another in Settings, or `ollama pull <model>` |
 | "This task needs about N tokens but the model is limited to M" | Content + conversation exceed the context window | Select a smaller portion; raise **Context size**; start a new conversation; use a model with a larger window |
 | Timeouts on large models | Generation slower than the timeout | Raise **Request timeout**; use a smaller/quantized model |
-| Model "talks about" calling tools instead of acting | Model without native tool calling | Diagnostics shows "text tool protocol"; prefer Llama 3.1+/Qwen 2.5+; lower temperature |
+| Model "talks about" calling tools instead of acting | Model without native tool calling | Diagnostics shows "text tool protocol"; choose a model that reports native tool calling (Diagnostics); lower temperature. See [model-compatibility.md](model-compatibility.md) for measured results |
 | Edit refused: "no longer contain the expected text" | Document changed after the assistant read it | Ask again; the assistant re-reads |
 | Action shows **Not verified** in Outlook | Reply windows cannot be read back by add-ins | Check the draft window; this is expected |
 | Add-in does not appear (Mac) | Manifest not in `wef` folder or Office not restarted | Re-run `install.sh`; quit Office fully (Cmd+Q) |

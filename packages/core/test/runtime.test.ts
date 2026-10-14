@@ -80,12 +80,12 @@ describe("agent runtime", () => {
   it("fails gracefully when the model's context window is too small", async () => {
     const big = new FakeWordDriver(["x".repeat(50_000)]);
     big.selectionRange = { start: 0, end: 0 };
-    const model = new ScriptedProvider([{ text: "never" }], { contextLength: 1024 });
+    const model = new ScriptedProvider([{ text: "never" }], { contextLength: 4096 });
     const s = setup(new WordAdapter(big), model, { settings: { contextBudgetChars: 100_000 } });
     const r = await s.runtime.run("summarize");
-    // Shrinks content first; succeeds within a reduced budget.
+    // Shrinks content first (tool definitions count against the window too); succeeds within a reduced budget.
     expect(r.outcome).toBe("completed");
-    expect(JSON.stringify(model.requests[0]!.messages).length).toBeLessThan(6000);
+    expect(JSON.stringify(model.requests[0]!.messages).length + JSON.stringify(model.requests[0]!.tools).length).toBeLessThan(4096 * 4);
 
     const tiny = new ScriptedProvider([{ text: "never" }], { contextLength: 1024 });
     const s2 = setup(new WordAdapter(big), tiny, { settings: { contextBudgetChars: 100_000, generation: { numCtx: 1024 } } });

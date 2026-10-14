@@ -13,91 +13,12 @@ import type { Compensation, Json } from "../types.js";
 import { normalizeText } from "../util.js";
 import type { RequirementChecker } from "./adapter.js";
 import { excerpt, makeItem } from "./common.js";
-import { SHAPE_KINDS, renderSlide, type Box, type PowerPointDriver, type PptShape, type PptSlide, type ShapeKind, type TextFormat } from "./powerpoint.js";
+import { SHAPE_KINDS, renderSlide, type Box, type PowerPointDriver, type ShapeKind, type TextFormat } from "./powerpoint.js";
+import { analyzeRendering, checkLayout, isTitleShape, type LayoutIssue } from "./powerpoint-qa.js";
 
 export const ACCENT = "#2F5BD3";
 export const ACCENT_LIGHT = "#DCE4FA";
 export const INK = "#1B1B1F";
-
-// ------------------------------------------------------------- layout check
-
-export type IssueKind = "off_slide" | "overlap" | "overflow" | "dense" | "no_title" | "empty_placeholder" | "small_text" | "inconsistent_title_size";
-
-export interface LayoutIssue {
-  slide: number;
-  slideId: string;
-  shapeId?: string;
-  kind: IssueKind;
-  severity: "high" | "medium" | "low";
-  detail: string;
-}
-
-const area = (b: Box) => Math.max(0, b.width) * Math.max(0, b.height);
-function intersection(a: Box, b: Box): number {
-  const w = Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left);
-  const h = Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top);
-  return w > 0 && h > 0 ? w * h : 0;
-}
-
-export function isTitleShape(sh: PptShape): boolean {
-  return sh.text !== null && /title/i.test(sh.name) && !/subtitle/i.test(sh.name);
-}
-
-/** Estimate whether text fits its box (average glyph width ≈ 0.5em, line height ≈ 1.2em). */
-export function estimateOverflow(text: string, box: Box, size = 18): { needed: number; available: number; overflows: boolean } {
-  const usableWidth = Math.max(10, box.width - 14.4);
-  const charsPerLine = Math.max(1, Math.floor(usableWidth / (size * 0.5)));
-  const lines = text.split(/\r?\n|\u000b/).reduce((n, p) => n + Math.max(1, Math.ceil(p.length / charsPerLine)), 0);
-  const needed = lines * size * 1.2 + 7.2;
-  return { needed, available: box.height, overflows: needed > box.height * 1.15 };
-}
-
-export function checkLayout(slides: PptSlide[], size: { width: number; height: number }): LayoutIssue[] {
-  const issues: LayoutIssue[] = [];
-  const titleSizes = new Map<number, number[]>();
-  for (const s of slides) {
-    const n = s.index + 1;
-    const add = (kind: IssueKind, severity: LayoutIssue["severity"], detail: string, shapeId?: string) => issues.push({ slide: n, slideId: s.id, shapeId, kind, severity, detail });
-    const textShapes = s.shapes.filter((x) => x.text !== null);
-    const title = textShapes.find(isTitleShape) ?? null;
-    if (!title || !title.text?.trim()) add("no_title", "medium", "Slide has no title text.");
-    else if (title.format?.size) titleSizes.set(title.format.size, [...(titleSizes.get(title.format.size) ?? []), n]);
-    const words = textShapes.reduce((c, x) => c + (x.text?.trim() ? x.text.trim().split(/\s+/).length : 0), 0);
-    if (words > 90) add("dense", "high", `${words} words on one slide; consider splitting or cutting.`);
-    else if (words > 70) add("dense", "medium", `${words} words; dense for presenting.`);
-    for (const sh of s.shapes) {
-      const b = sh.box;
-      if (sh.type === "Placeholder" && sh.text === "") add("empty_placeholder", "medium", `Empty placeholder "${sh.name}".`, sh.id);
-      if (!b) continue;
-      if (b.left < -1 || b.top < -1 || b.left + b.width > size.width + 1 || b.top + b.height > size.height + 1)
-        add("off_slide", "high", `"${sh.name}" extends beyond the slide edge.`, sh.id);
-      if (sh.text?.trim()) {
-        const fs = sh.format?.size;
-        if (fs && fs < 12) add("small_text", "low", `"${sh.name}" uses ${fs}pt text; hard to read when presented.`, sh.id);
-        const o = estimateOverflow(sh.text, b, fs ?? 18);
-        if (o.overflows) add("overflow", "high", `"${sh.name}" likely overflows its box (needs ~${Math.round(o.needed)}pt of ${Math.round(o.available)}pt height).`, sh.id);
-      }
-    }
-    for (let i = 0; i < textShapes.length; i++)
-      for (let j = i + 1; j < textShapes.length; j++) {
-        const a = textShapes[i]!;
-        const c = textShapes[j]!;
-        if (!a.box || !c.box || !a.text?.trim() || !c.text?.trim()) continue;
-        const overlap = intersection(a.box, c.box) / Math.max(1, Math.min(area(a.box), area(c.box)));
-        if (overlap > 0.2) add("overlap", "high", `"${a.name}" and "${c.name}" overlap (${Math.round(overlap * 100)}% of the smaller box).`, c.id);
-      }
-  }
-  if (titleSizes.size > 1)
-    issues.push({
-      slide: 0,
-      slideId: "*",
-      kind: "inconsistent_title_size",
-      severity: "low",
-      detail: `Title sizes vary: ${[...titleSizes.entries()].map(([sz, ns]) => `${sz}pt on slide(s) ${ns.join(", ")}`).join("; ")}.`,
-    });
-  const order = { high: 0, medium: 1, low: 2 };
-  return issues.sort((x, y) => order[x.severity] - order[y.severity] || x.slide - y.slide);
-}
 
 // ------------------------------------------------------------ geometry
 
@@ -662,7 +583,7 @@ export function buildCapabilities(d: PowerPointDriver, req: RequirementChecker):
   caps.push({
     name: "presentation.check_layout",
     description:
-      "Check slide objects for layout problems: text likely overflowing its box, overlapping text, shapes off the slide, missing titles, empty placeholders, dense slides, small text, inconsistent title sizes. Inspects object geometry and text only; it does not see the rendered slide.",
+      "Object-level check of slides: shapes off the slide, likely text overflow (estimated), overlapping text or pictures over text, empty or nearly empty slides, missing titles where the layout has one, empty placeholders, dense slides, small text, and inconsistent title size/position, body sizes and fonts. Each finding has slide, objects, severity and a remediation. It inspects object geometry and text only — not the rendered slide (use presentation.check_rendering for that).",
     hosts: ["powerpoint"],
     risk: "read_active",
     modifies: false,
@@ -679,10 +600,55 @@ export function buildCapabilities(d: PowerPointDriver, req: RequirementChecker):
         id: `ppt:layout:${a.slideIds?.join(",") ?? "all"}`,
         label: `Layout check (${issues.length} issue${issues.length === 1 ? "" : "s"})`,
         scope: "partial",
-        content: `${method}\n${issues.map((i) => `- [${i.severity}] slide ${i.slide || "deck"}: ${i.detail}`).join("\n") || "No issues found."}`,
+        content: `${method}\n${renderIssues(issues)}`,
         source: "presentation.check_layout",
       });
       return { output: { issues: issues as unknown as Json, method, renderingVerified: false }, context: [item] };
+    },
+  });
+
+  caps.push({
+    name: "presentation.check_rendering",
+    description:
+      "Render slides as images (where this PowerPoint supports it) and check the actual pixels: text rendering past the bottom of its box, text that does not appear, and slides that render blank. Returns status \"unsupported\" when rendering is not available — then nothing has been visually verified.",
+    hosts: ["powerpoint"],
+    risk: "read_active",
+    modifies: false,
+    inputSchema: { type: "object", properties: { slideIds: { type: "array", maxItems: 20, items: { type: "string", minLength: 1 } } } },
+    async execute(a: { slideIds?: string[] }) {
+      if (!d.supportsRendering()) {
+        const reason = "Rendering slides requires PowerPointApi 1.8 (Slide.getImageAsBase64), which this PowerPoint does not support. No visual check was performed.";
+        return {
+          output: { supported: false, status: "unsupported", renderingVerified: false, reason },
+          context: [makeItem({ host: "powerpoint", id: "ppt:render:unsupported", label: "Rendered check: unsupported", scope: "metadata", content: reason, source: "presentation.check_rendering" })],
+        };
+      }
+      const all = await d.slides();
+      const chosen = (a.slideIds ? all.filter((s) => a.slideIds!.includes(s.id)) : all).slice(0, 20);
+      const size = await d.slideSize();
+      const issues: LayoutIssue[] = [];
+      const failed: number[] = [];
+      for (const s of chosen) {
+        try {
+          issues.push(...analyzeRendering(s, await d.renderSlide(s.id, 640), size));
+        } catch {
+          failed.push(s.index + 1);
+        }
+      }
+      const rendered = chosen.length - failed.length;
+      const method = `Rendered ${rendered} of ${chosen.length} slide(s) at 640px and analysed the pixels${failed.length ? `; slide(s) ${failed.join(", ")} could not be rendered and were not visually checked` : ""}${all.length > chosen.length ? `; ${all.length - chosen.length} slide(s) not included in this check` : ""}.`;
+      const item = makeItem({
+        host: "powerpoint",
+        id: `ppt:render:${a.slideIds?.join(",") ?? "all"}`,
+        label: `Rendered check (${issues.length} issue${issues.length === 1 ? "" : "s"})`,
+        scope: "partial",
+        content: `${method}\n${renderIssues(issues)}`,
+        source: "presentation.check_rendering",
+      });
+      return {
+        output: { supported: true, status: failed.length ? "partial" : "checked", renderingVerified: rendered > 0, slidesRendered: rendered, notRendered: failed, issues: issues as unknown as Json, method },
+        context: [item],
+      };
     },
   });
 
@@ -711,4 +677,12 @@ export function buildCapabilities(d: PowerPointDriver, req: RequirementChecker):
   });
 
   return caps;
+}
+
+function renderIssues(issues: LayoutIssue[]): string {
+  return (
+    issues
+      .map((i) => `- [${i.severity}] ${i.slide ? `slide ${i.slide}` : "deck"} (${i.basis})${i.objects.length ? ` [${i.objects.map((o) => o.name).join(", ")}]` : ""}: ${i.detail} Fix: ${i.remediation}`)
+      .join("\n") || "No issues found."
+  );
 }

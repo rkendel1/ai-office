@@ -21,6 +21,8 @@ import type { CompanionClient } from "./companion";
 
 export interface HostInfo {
   adapter: HostAdapter;
+  /** The driver behind the adapter (used by the acceptance runner to create fixtures and read state). */
+  driver: unknown;
   /** True when running outside Office against an in-memory sample document. */
   demo: boolean;
   label: string;
@@ -31,37 +33,39 @@ export function createHost(officeHost: Office.HostType | null, demoKind: string 
   if (officeHost === null || typeof Office === "undefined") return demoHost(demoKind ?? "word");
   switch (officeHost) {
     case Office.HostType.Word:
-      return { adapter: new WordAdapter(new OfficeWordDriver(), officeRequirements), demo: false, label: "Word" };
+      return withDriver(new OfficeWordDriver(), (d) => new WordAdapter(d, officeRequirements), "Word");
     case Office.HostType.Excel:
-      return { adapter: new ExcelAdapter(new OfficeExcelDriver(), officeRequirements), demo: false, label: "Excel" };
+      return withDriver(new OfficeExcelDriver(), (d) => new ExcelAdapter(d, officeRequirements), "Excel");
     case Office.HostType.PowerPoint:
-      return { adapter: new PowerPointAdapter(new OfficePowerPointDriver(), officeRequirements), demo: false, label: "PowerPoint" };
+      return withDriver(new OfficePowerPointDriver(), (d) => new PowerPointAdapter(d, officeRequirements), "PowerPoint");
     case Office.HostType.Outlook:
-      return { adapter: new OutlookAdapter(new OfficeOutlookDriver(), officeRequirements), demo: false, label: "Outlook" };
+      return withDriver(new OfficeOutlookDriver(), (d) => new OutlookAdapter(d, officeRequirements), "Outlook");
   }
   return demoHost(demoKind ?? "word");
+}
+
+function withDriver<D>(driver: D, make: (d: D) => HostAdapter, label: string, demo = false): HostInfo {
+  return { adapter: make(driver), driver, demo, label };
 }
 
 /** Sample documents for running the pane in a normal browser (development and demos). */
 function demoHost(kind: string): HostInfo {
   if (kind === "excel")
-    return {
-      adapter: new ExcelAdapter(new FakeExcelDriver({ Sales: [["Region", "Q1", "Q2"], ["North", 120, 135], ["South", 90, 101], ["West", 75, 88]] }, "Demo workbook")),
-      demo: true,
-      label: "Excel (demo)",
-    };
+    return withDriver(new FakeExcelDriver({ Sales: [["Region", "Q1", "Q2"], ["North", 120, 135], ["South", 90, 101], ["West", 75, 88]] }, "Demo workbook"), (d) => new ExcelAdapter(d), "Excel (demo)", true);
   if (kind === "powerpoint")
-    return {
-      adapter: new PowerPointAdapter(new FakePowerPointDriver([{ shapes: [{ name: "Title", text: "Local AI in Office" }] }, { shapes: [{ name: "Title", text: "Why" }, { name: "Body", text: "Privacy\nNo subscription\nWorks offline" }] }], "Demo deck")),
-      demo: true,
-      label: "PowerPoint (demo)",
-    };
+    return withDriver(
+      new FakePowerPointDriver([{ shapes: [{ name: "Title 1", text: "Local AI in Office" }] }, { shapes: [{ name: "Title 1", text: "Why" }, { name: "Body", text: "Privacy\nNo subscription\nWorks offline" }] }], "Demo deck"),
+      (d) => new PowerPointAdapter(d),
+      "PowerPoint (demo)",
+      true,
+    );
   if (kind === "outlook")
-    return {
-      adapter: new OutlookAdapter(new FakeOutlookDriver({ itemType: "message", subject: "Budget review", from: "Dana <dana@example.com>", to: ["you@example.com"], cc: [], body: "Hi — can we meet Thursday at 10 to review the Q3 budget? Please bring the vendor quotes.", attachments: [] })),
-      demo: true,
-      label: "Outlook (demo)",
-    };
+    return withDriver(
+      new FakeOutlookDriver({ itemType: "message", subject: "Budget review", from: "Dana <dana@example.com>", to: ["you@example.com"], cc: [], body: "Hi — can we meet Thursday at 10 to review the Q3 budget? Please bring the vendor quotes.", attachments: [] }),
+      (d) => new OutlookAdapter(d),
+      "Outlook (demo)",
+      true,
+    );
   const d = new FakeWordDriver(
     [
       { text: "Project Lighthouse — Status", style: "Title" },
@@ -72,7 +76,7 @@ function demoHost(kind: string): HostInfo {
     ],
     "Demo document",
   );
-  return { adapter: new WordAdapter(d), demo: true, label: "Word (demo)" };
+  return withDriver(d, (x) => new WordAdapter(x), "Word (demo)", true);
 }
 
 /** Build the inference provider. No fallback: if this fails, the task fails. */

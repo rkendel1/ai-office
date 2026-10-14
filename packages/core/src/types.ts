@@ -19,7 +19,8 @@ export type ContextScope =
   | "selection" // the user's current selection only
   | "partial" // part of the active item (e.g. paragraphs 10-40, one range)
   | "full" // the entire readable content of the active item
-  | "metadata"; // structure only (sheet names, slide count, subject line)
+  | "metadata" // structure only (sheet names, slide count, subject line)
+  | "source"; // content the user shared from another Office app and attached to this task
 
 export interface ContextItem {
   /** Stable identifier used for freshness tracking and provenance, e.g. "word:paragraphs:0-40". */
@@ -39,6 +40,15 @@ export interface ContextItem {
   retrievedAt: number;
   /** Capability that produced this item. */
   source: string;
+  /** For content shared from another Office app: where it came from. */
+  provenance?: {
+    app: HostKind;
+    document?: string;
+    documentId?: string;
+    scope: string;
+    retrievedAt: number;
+    sharedAt?: number;
+  };
 }
 
 export interface UnsupportedContent {
@@ -139,7 +149,8 @@ export interface ExecutionRecord {
   target: string;
   risk: RiskClass;
   decision: PolicyDecision;
-  approval?: "approved" | "rejected" | "not_required";
+  /** "plan" = covered by a plan the user approved for bounded batch execution. */
+  approval?: "approved" | "rejected" | "not_required" | "plan";
   status: ExecutionStatus;
   output?: Json;
   verification?: Verification;

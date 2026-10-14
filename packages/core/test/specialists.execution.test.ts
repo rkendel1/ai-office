@@ -29,7 +29,7 @@ describe("Word Document Writer", () => {
     const doc = new FakeWordDriver(["Notes: launch in Q3 with 40 pilot users.", "Need pricing and support plan."]);
     const model = new ScriptedProvider([
       call("document.write_blocks", { mode: "insert", position: "end", blocks: [{ text: "Too early", style: "Title" }] }),
-      call("plan.propose", { title: "Launch plan", steps: [{ title: "Overview" }, { title: "Pricing" }, { title: "Support" }] }),
+      call("plan.propose", { outcome: "Test outcome", target: "The open file", title: "Launch plan", steps: [{ title: "Overview" }, { title: "Pricing" }, { title: "Support" }] }),
       call("document.write_blocks", {
         mode: "insert",
         position: "end",
@@ -66,7 +66,7 @@ describe("Word Document Writer", () => {
     const doc = new FakeWordDriver(["x"]);
     doc.dropNextWrite = true;
     const model = new ScriptedProvider([
-      call("plan.propose", { title: "Doc", steps: [{ title: "Intro" }] }),
+      call("plan.propose", { outcome: "Test outcome", target: "The open file", title: "Doc", steps: [{ title: "Intro" }] }),
       call("document.write_blocks", { mode: "insert", position: "end", blocks: [{ text: "Doc", style: "Title" }, { text: "Intro", style: "Heading1" }, { text: "Body one." }, { text: "Body two." }] }),
       { text: "Done! The document is complete." },
     ]);
@@ -249,7 +249,7 @@ describe("Excel Dashboard Builder", () => {
     const xl = salesData();
     const model = new ScriptedProvider([
       call("workbook.compute_stats", { sheet: "Sales", measures: [{ column: "Q1", ops: ["sum"] }, { column: "Q2", ops: ["sum"] }] }),
-      call("plan.propose", { title: "Sales dashboard", steps: [{ title: "Sheet Dashboard" }, { title: "Totals per quarter as formulas" }, { title: "Column chart" }] }),
+      call("plan.propose", { outcome: "Test outcome", target: "The open file", title: "Sales dashboard", steps: [{ title: "Sheet Dashboard" }, { title: "Totals per quarter as formulas" }, { title: "Column chart" }] }),
       call("workbook.add_worksheet", { name: "Dashboard" }),
       call("workbook.write_range", { sheet: "Dashboard", address: "A1:B3", values: [["Quarter", "Total"], ["Q1", 285], ["Q2", 324]] }),
       call("workbook.write_range", { sheet: "Dashboard", address: "A1:B3", formulas: [["Quarter", "Total"], ["Q1", "=SUM(Sales!B2:B4)"], ["Q2", "=SUM(Sales!C2:C4)"]] }),
@@ -273,7 +273,7 @@ describe("Excel Dashboard Builder", () => {
 describe("PowerPoint Presentation Author", () => {
   const steps = [
     call("plan.propose", {
-      title: "Launch deck",
+      outcome: "Test outcome", target: "The open file", title: "Launch deck",
       steps: [{ title: "Lighthouse launch", detail: "title slide" }, { title: "The problem" }, { title: "Our approach", detail: "process diagram" }],
     }),
     call("presentation.list_layouts", {}),
@@ -282,6 +282,7 @@ describe("PowerPoint Presentation Author", () => {
     call("presentation.create_slide", { title: "Our approach", layout: "Title Only" }),
     call("presentation.add_diagram", { slideId: "slide1002", kind: "process", items: [{ title: "Collect" }, { title: "Analyse" }, { title: "Report" }] }),
     call("presentation.check_layout", {}),
+    call("presentation.check_rendering", {}),
   ];
 
   it("creates multiple distinct, verified slides after an approved plan", async () => {
@@ -318,7 +319,7 @@ describe("PowerPoint Presentation Author", () => {
   it("will not touch existing slides unless asked", async () => {
     const ppt = new FakePowerPointDriver([{ shapes: [{ name: "Title", text: "Existing" }] }]);
     const model = new ScriptedProvider([
-      call("plan.propose", { title: "x", steps: [{ title: "a" }] }),
+      call("plan.propose", { outcome: "Test outcome", target: "The open file", title: "x", steps: [{ title: "a" }] }),
       call("presentation.format_text", { slideId: "s1", shapeId: "s1sh1", format: { size: 10 } }),
       { text: "ok" },
     ]);
@@ -374,6 +375,7 @@ describe("PowerPoint Deck Reviewer", () => {
   it("identifies a deliberately introduced problem", async () => {
     const model = new ScriptedProvider([
       call("presentation.check_layout", {}),
+      call("presentation.check_rendering", {}),
       { text: "High priority:\n- Slide 2 has no title and its body text overflows; the claim that share will triple has no evidence.\nLow priority:\n- Slide 1 needs supporting data. Layout findings come from slide objects; the rendered slides were not inspected." },
     ]);
     const s = setup(new PowerPointAdapter(deck()), model);

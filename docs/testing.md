@@ -18,15 +18,34 @@ npx vitest run packages/core/test/security.test.ts   # one suite
 | `addin/test/ui.test.tsx` | renders the real task pane (jsdom) and drives ask → propose → approve → apply → verify through the UI |
 | `core/test/specialists.test.ts` | every specialist's contract, allowlist validity, read-only enforcement, context acquisition; each example prompt routes to its own specialist; routing (selection, host mismatch, ambiguity, fallback, subsumption); switching keeps conversation and re-applies capabilities |
 | `core/test/specialists.execution.test.ts` | complete workflows for all 14 specialists, including negative cases (dropped facts, ungrounded numbers, formula errors, misattributed commitments, missed deck problems, unsupported notes) |
-| `core/test/specialists.security.test.ts` | specialists cannot widen permissions; injection cannot switch specialists or approve plans; plan approval grants nothing |
+| `core/test/specialists.security.test.ts` | specialists cannot widen permissions; injection cannot switch specialists or approve plans; plan approval grants nothing unless the user chooses batch approval |
+| `core/test/plan-scope.test.ts` | operation validation; batch approval limited to declared operations within scope; suspension on undeclared, failed, unverified or out-of-scope changes; per-operation report |
+| `core/test/sources.test.ts` | shared sources: explicit attachment, provenance in fenced context, expiry, read-only, size limits |
+| `core/test/powerpoint-qa.test.ts` | object-level layout findings; rendered-pixel analysis (overflow, missing text, blank); unsupported rendering reported as unsupported |
+| `core/test/acceptance-suite.test.ts` | the live acceptance scenarios, run against in-memory hosts (**mocked** mode); precondition blocking; status matrix keeps live and mocked apart |
+| `core/test/evals.test.ts` | evaluation harness: every case's reference passes, every flawed behaviour fails its target metric; timeouts; reports and matrix |
+| `core/test/invariants.test.ts` | release gates, one per product invariant ([security.md](security.md#product-invariants-and-their-gates)) |
+| `companion/test/evals.test.ts` | evaluation CLI against the Ollama stand-in: local-only, no pulls, timing, resources, environment, output files |
+| `addin/test/ui-sources.test.tsx` | Word → companion → PowerPoint source handoff through the real UI and companion |
+| `addin/test/ui-acceptance.test.tsx` | acceptance panel: blank-document gate, demo runs recorded as mocked |
 | `core/test/capabilities.test.ts` | every capability added for specialists (structured writing, statistics/profiling/cleaning, slide construction, diagrams, charts, tables, layout checks, thread splitting) and the evidence helpers |
 | `addin/test/ui-specialists.test.tsx` | specialist picker, routing preview, editable examples, clarification, completion checklist |
 
 The in-memory hosts (`core/src/testing/fakes.ts`) implement the same driver interfaces as the Office.js drivers, and `fake-ollama.ts` speaks the Ollama HTTP API (including NDJSON streaming).
 
+## Three kinds of verification
+
+| Kind | What it proves | How it is produced | Where it is reported |
+|---|---|---|---|
+| **Mocked** | The runtime, specialists, approvals, verification logic and checks behave as designed | In-memory Office hosts and a scripted model or Ollama stand-in (`npm test`) | CI; acceptance records with `mode: "mocked"` |
+| **Live** | Office.js drivers really create, read back and verify content in a given Office build | The acceptance runner inside real Office, or the manual checklist below | Acceptance records with `mode: "live"` ([acceptance.md](acceptance.md)) |
+| **Rendered** | Slides look right as pixels, not just as objects | `presentation.check_rendering` on PowerPointApi 1.8, else a person | `visual` field of acceptance records; *unsupported* where the API is missing |
+
+Model quality is a fourth, separate question, answered only by real-model runs of the [evaluation harness](model-compatibility.md).
+
 ## Manual acceptance in live Office
 
-Run on every row of the [compatibility matrix](compatibility.md) before a release. Use a tool-calling model (e.g. `qwen2.5:7b`) and the default policy.
+Run on every row of the [compatibility matrix](compatibility.md) before a release, with the default policy and a model you have evaluated (see [model-compatibility.md](model-compatibility.md)). The automated scenarios in [acceptance.md](acceptance.md) cover the core of this checklist and record results; use this list for what they do not cover.
 
 **Setup**
 1. `npm run build && npm start`; sideload the manifest; pair; choose a model.

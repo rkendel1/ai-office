@@ -38,12 +38,35 @@ A request can be handled by a specialist chosen by the user or by the determinis
 - **guards** that may reject individual calls (plan required, writes only to new sheets, only new slides, quote text before editing);
 - **completion criteria** evaluated after the task against execution records, inspected context and before/after host snapshots. An unmet required criterion turns a "completed" task into "partial", and is listed in the report.
 
+### Bounded plan execution
+
+A plan proposed with `plan.propose` declares its `operations` (capability, description, scope, count). The runtime validates them before the user sees the plan. If the user approves the plan as a batch, the runtime holds a **plan grant** for the task: inside the approver wrapper, a call that matches a declared operation and its scope is approved `via: "plan"` without a prompt (policy `confirm` still prompts); a modifying call that matches nothing suspends the grant and asks. After each dispatch the grant records the result against its operation, and suspends on failed, unverified, partial or cancelled results. The report carries `planExecution`, and the outcome is *partial* if any declared operation is not done. This is a state machine inside the existing runtime, not a new orchestration layer.
+
+### Shared sources
+
+`runtime.captureForSharing()` performs a read in the current app (`selection.read`, or `outlook.split_thread`) with `origin: "user"`, and the add-in posts the result to the companion's in-memory `SourceStore`. In another app, the user attaches sources to a task; `runtime.run(request, { sources })` adds each as a read-only context item with provenance (`from_app`, `from_document`, `from_scope`, `retrieved`). Expired sources are dropped with a stated limitation.
+
+## Verification levels
+
+| Level | What inspects the result | Where |
+|---|---|---|
+| **Read-back** (every modifying capability) | The handler re-reads the affected Office state through the driver | Mocked (in-memory drivers) in CI; live through Office.js |
+| **Object-level layout** | Shape geometry, text and formatting | `presentation.check_layout` |
+| **Rendered** | Pixels of the rendered slide | `presentation.check_rendering`, PowerPointApi 1.8 only; *unsupported* elsewhere |
+| **Human** | A person, following recorded manual and visual steps | [Acceptance records](acceptance.md) |
+
+Docs and reports keep these apart: a mocked pass is not a live pass, and an object-level pass is not a rendered pass.
+
+## Evaluation harness
+
+`core/src/evals` runs fixed cases through `createSession` (the production router, specialists, registry and runtime) with in-memory hosts, and scores each run from execution records and host state. The companion CLI (`loai-companion eval`) supplies a local `OllamaProvider`, resource probes and environment capture. See [model-compatibility.md](model-compatibility.md).
+
 ## Outcome classification
 
 | Outcome | When |
 |---|---|
 | `completed` | No limits hit; every attempted change verified; all required specialist criteria met |
-| `partial` | A limit was hit; some changes failed or could not be verified; or a required specialist criterion is unmet |
+| `partial` | A limit was hit; some changes failed or could not be verified; a required specialist criterion is unmet; or a declared plan operation is not done |
 | `failed` | Model/inference error before any successful change, or all attempted changes failed |
 | `cancelled` | User stopped the task. No new actions start; changes already committed by Office remain and are listed |
 
@@ -68,4 +91,5 @@ The add-in can also talk to Ollama directly (`transport: direct`) if `OLLAMA_ORI
 - No reading of other documents or unrelated mail (`read_external` exists in the policy for future capabilities and requires confirmation).
 - Speaker notes are not offered in live PowerPoint: Office.js does not expose them. The capability exists for hosts that do; the Presentation Author reports notes it could not add.
 - PowerPoint charts are drawn with editable shapes, because Office.js cannot create native PowerPoint charts.
-- Layout checks inspect slide objects (geometry, text, formatting), never the rendered slide.
+- `presentation.check_layout` inspects slide objects (geometry, text, formatting). `presentation.check_rendering` inspects rendered slides only where PowerPointApi 1.8 provides `Slide.getImageAsBase64`; elsewhere it reports *unsupported*, and the specialist must say the slides were not visually checked.
+- Cross-app work needs the user to share content explicitly: Office.js gives an add-in no access to other open documents, and the assistant has no capability to request one.

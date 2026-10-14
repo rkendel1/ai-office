@@ -4,6 +4,7 @@ import type { CompanionClient } from "../services/companion";
 import type { HostInfo } from "../services/host";
 import type { Connection } from "./App";
 import { Field } from "./components";
+import { AcceptancePanel } from "./Acceptance";
 
 const RISK_LABEL: Record<RiskClass, string> = {
   read_selection: "Read the selection",
@@ -282,6 +283,9 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
           </div>
         ))}
         {s.policy.modify === "allow" && <p className="warn small">Edits will be applied without a preview. Substantial overwrites still require confirmation.</p>}
+        <label className="check">
+          <input type="checkbox" checked={s.planBatchApproval} onChange={(e) => set({ planBatchApproval: e.target.checked })} /> Offer “approve plan as a batch” for multi-step plans (only the declared changes, on the declared targets; confirmations still ask)
+        </label>
       </section>
 
       <section>
@@ -322,6 +326,8 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
           </pre>
         )}
       </section>
+
+      <AcceptancePanel host={host} companion={companion} getProvider={getProvider} settings={s} />
     </div>
   );
 }

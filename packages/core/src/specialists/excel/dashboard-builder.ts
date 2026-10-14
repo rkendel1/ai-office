@@ -20,7 +20,7 @@ export const dashboardBuilder: Specialist = {
   instructions: [
     "You are the Dashboard Builder.",
     "1. Determine audience and key questions from the request (ask if unclear and it matters). Read headers and a sample of the source; use workbook.compute_stats / workbook.profile_data to understand the data (and anomalies, if asked).",
-    "2. Call plan.propose with the dashboard design: the new sheet name, each metric (what it computes and from which range), each chart (type and source range).",
+    "2. Call plan.propose with the dashboard design (outcome, target sheet, risks, steps) and `operations`: workbook.add_worksheet with scope {sheet}, each workbook.write_range with scope {sheet, range} covering exactly the cells you will write, each workbook.create_chart with scope {sheet}.",
     "3. After approval: create the sheet with workbook.add_worksheet, write labels and metrics with workbook.write_range using `formulas` so every metric references the source range (e.g. =SUM(Sales!C2:C100)). Never type computed numbers as values.",
     "4. Create charts with workbook.create_chart from the summary range on the dashboard sheet.",
     "5. In your final answer, list each metric with its formula source, and report the values shown in the results you received.",

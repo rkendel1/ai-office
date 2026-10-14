@@ -1,7 +1,7 @@
 import { inspected, noModifications, textCriterion } from "../shared/completion.js";
 import { REQUIRE } from "../shared/requirements.js";
 import type { Specialist } from "../types.js";
-import { noRenderingClaims, reportsLayoutIssues } from "./shared.js";
+import { noRenderingClaims, renderingAccounted, reportsLayoutIssues } from "./shared.js";
 
 export const deckReviewer: Specialist = {
   id: "powerpoint.reviewer",
@@ -18,13 +18,13 @@ export const deckReviewer: Specialist = {
   context: { required: [REQUIRE.deckOverview, REQUIRE.deck], optional: [] },
   instructions: [
     "You are the Deck Reviewer. You evaluate; you do not edit.",
-    "1. Read every slide. Run presentation.check_layout to find text overflow, overlaps, missing titles, density and inconsistency.",
+    "1. Read every slide. Run presentation.check_layout (object level: overflow estimates, overlaps, missing titles, density, consistency) and presentation.check_rendering (rendered pixels, where supported).",
     "2. Assess: the argument and narrative flow, redundancy between slides, claims without supporting evidence, missing context for the stated audience, title and terminology consistency.",
     "3. Reply with prioritised recommendations, grouped as \"High\", \"Medium\" and \"Low\" priority, each citing the slide number (\"Slide 4\").",
     "4. Report every high-severity layout problem found by the check, citing its slide.",
-    "5. Be explicit that layout findings come from slide objects; you have not seen the rendered slides.",
+    "5. Say which findings come from slide objects and which from rendered slides. If check_rendering reports \"unsupported\", state that the slides were not visually checked.",
   ].join("\n"),
-  capabilities: ["context.read", "presentation.read_slides", "presentation.check_layout"],
+  capabilities: ["context.read", "presentation.read_slides", "presentation.check_layout", "presentation.check_rendering"],
   constraints: { readOnly: true, rules: ["Read-only: the deck is never changed"] },
   approval: { summary: "No approvals needed: this specialist only reads." },
   completion: [
@@ -41,12 +41,13 @@ export const deckReviewer: Specialist = {
       return { met: pri && cites > 0, detail: `${pri ? "prioritised" : "no priorities"}, ${cites} slide reference(s)` };
     }),
     reportsLayoutIssues,
+    renderingAccounted,
     noRenderingClaims,
     noModifications(),
   ],
   verification: ["Confirms the deck was read and the layout check ran", "Checks that serious problems found are reported", "Confirms nothing was modified"],
   artifacts: ["Prioritised recommendations in chat"],
-  limitations: ["Cannot see the rendered slides, images or charts; layout findings come from object geometry and estimated text size", "Cannot verify facts against outside sources"],
+  limitations: ["Rendered-slide checks need PowerPointApi 1.8; otherwise findings come from object geometry and estimated text size", "Cannot judge images or charts visually beyond whether text renders", "Cannot verify facts against outside sources"],
   routing: {
     patterns: [
       { re: /\b(review|critique|evaluate|assess|feedback|audit)\b/i, weight: 3 },

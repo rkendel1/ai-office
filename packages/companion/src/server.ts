@@ -4,12 +4,13 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { isLoopbackUrl, minimizeRecord, normalizeSettings, type TaskRecord } from "@loai/core";
+import { isLoopbackUrl, minimizeRecord, normalizeSettings, type AcceptanceRecord, type TaskRecord } from "@loai/core";
 import { Pairing, authenticate, loadAdminToken, type Principal } from "./auth.js";
 import type { CompanionConfig } from "./config.js";
 import { CompanionStore } from "./store.js";
+import { SourceStore } from "./sources.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 /** Ollama endpoints the companion forwards. Everything else is refused. */
 const OLLAMA_ROUTES: Record<string, "GET" | "POST"> = {
@@ -46,11 +47,12 @@ export interface Companion {
   url: string;
   pairing: Pairing;
   store: CompanionStore;
+  sources: SourceStore;
   adminToken: string;
   close(): Promise<void>;
 }
 
-export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: string) => void; fetchImpl?: typeof fetch } = {}): Promise<Companion> {
+export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: string) => void; fetchImpl?: typeof fetch; now?: () => number } = {}): Promise<Companion> {
   const log = opts.log ?? ((m: string) => console.log(m));
   const fetchImpl = opts.fetchImpl ?? fetch;
   if (!cfg.allowRemoteOllama && !isLoopbackUrl(cfg.ollamaUrl))
@@ -59,6 +61,7 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
   const store = new CompanionStore(cfg.dbPath);
   const adminToken = loadAdminToken(cfg.home);
   const pairing = new Pairing(store);
+  const sources = new SourceStore(opts.now);
   const ollamaBase = cfg.ollamaUrl.replace(/\/+$/, "");
   const tls = cfg.tlsCertPath && cfg.tlsKeyPath && fs.existsSync(cfg.tlsCertPath) && fs.existsSync(cfg.tlsKeyPath);
 
@@ -206,6 +209,33 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
       await store.clear();
       return json(res, 200, { cleared: true });
     }
+    // Acceptance records (live Office test results) are kept as JSON files for the status matrix.
+    if (route === "POST /v1/acceptance") {
+      const rec = (await readJson(req)) as AcceptanceRecord;
+      const problem = acceptanceProblem(rec);
+      if (problem) throw new HttpError(400, problem);
+      const dir = path.join(cfg.home, "acceptance");
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const file = path.join(dir, `${rec.environment.recordedAt.replace(/[^0-9TZ]/g, "")}-${rec.mode}-${rec.scenarioId}.json`);
+      fs.writeFileSync(file, JSON.stringify(rec, null, 2), { mode: 0o600 });
+      return json(res, 201, { stored: path.basename(file) });
+    }
+    if (route === "GET /v1/acceptance") return json(res, 200, { records: readAcceptanceRecords(cfg.home) });
+
+    // Cross-app sources: shared on an explicit user action, memory only, expiring.
+    if (route === "POST /v1/sources") {
+      const r = sources.add(await readJson(req));
+      return r.error ? json(res, 400, { error: r.error }) : json(res, 201, r.source);
+    }
+    if (route === "GET /v1/sources") return json(res, 200, { sources: sources.list() });
+    if (route === "DELETE /v1/sources") return json(res, 200, { deleted: sources.clear() });
+    const sm = /^(GET|DELETE) \/v1\/sources\/([0-9a-f-]{36})$/.exec(route);
+    if (sm) {
+      if (sm[1] === "DELETE") return json(res, 200, { deleted: sources.delete(sm[2]!) ? 1 : 0 });
+      const s = sources.get(sm[2]!);
+      return s ? json(res, 200, s) : json(res, 404, { error: "This shared content has expired or was removed." });
+    }
+
     const hm = /^GET \/v1\/history\/([\w-]{1,80})$/.exec(route);
     if (hm) {
       const r = await store.get(hm[1]!);
@@ -311,6 +341,7 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
     url,
     pairing,
     store,
+    sources,
     adminToken,
     close: () =>
       new Promise<void>((resolve) => {
@@ -321,4 +352,29 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
         });
       }),
   };
+}
+
+function acceptanceProblem(r: AcceptanceRecord): string | undefined {
+  if (!r || r.schema !== 1) return "Unsupported record schema";
+  if (typeof r.scenarioId !== "string" || !/^[\w.-]{1,100}$/.test(r.scenarioId)) return "Invalid scenarioId";
+  if (r.mode !== "live" && r.mode !== "mocked") return "Invalid mode";
+  if (!["passed", "failed", "blocked", "error"].includes(r.outcome)) return "Invalid outcome";
+  if (!r.environment || typeof r.environment.recordedAt !== "string" || typeof r.environment.officeApp !== "string") return "Missing environment";
+  if (!Array.isArray(r.checks) || !Array.isArray(r.manual)) return "Missing checks";
+  return undefined;
+}
+
+export function readAcceptanceRecords(home: string): AcceptanceRecord[] {
+  const dir = path.join(home, "acceptance");
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .flatMap((f) => {
+      try {
+        return [JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as AcceptanceRecord];
+      } catch {
+        return [];
+      }
+    });
 }

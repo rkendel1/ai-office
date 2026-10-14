@@ -184,3 +184,77 @@ describe("companion API", () => {
     expect(r.body.pairedClients).toBe(1);
   });
 });
+
+describe("cross-app sources", () => {
+  const source = { app: "word", documentTitle: "Strategy.docx", scopeLabel: "Selection (paragraphs 1–2)", content: "Customer problem: reports take 3 days.", truncated: false, retrievedAt: Date.now() };
+
+  it("shares, lists without content, fetches and deletes; requires pairing", async () => {
+    const token = await pairClient();
+    const h = { origin: ORIGIN, authorization: `Bearer ${token}`, "content-type": "application/json" };
+    expect((await req({ method: "POST", path: "/v1/sources", headers: { origin: ORIGIN, "content-type": "application/json" }, body: JSON.stringify(source) })).status).toBe(401);
+    const created = await req({ method: "POST", path: "/v1/sources", headers: h, body: JSON.stringify(source) });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ app: "word", chars: source.content.length });
+    expect(created.body.content).toBeUndefined();
+    const list = await req({ path: "/v1/sources", headers: h });
+    expect(list.body.sources).toHaveLength(1);
+    expect(list.text).not.toContain("Customer problem");
+    const full = await req({ path: `/v1/sources/${created.body.id}`, headers: h });
+    expect(full.body.content).toBe(source.content);
+    expect((await req({ method: "DELETE", path: `/v1/sources/${created.body.id}`, headers: h })).body.deleted).toBe(1);
+    expect((await req({ path: `/v1/sources/${created.body.id}`, headers: h })).status).toBe(404);
+  });
+
+  it("rejects invalid or oversized content and foreign origins", async () => {
+    const token = await pairClient();
+    const h = { origin: ORIGIN, authorization: `Bearer ${token}`, "content-type": "application/json" };
+    expect((await req({ method: "POST", path: "/v1/sources", headers: h, body: JSON.stringify({ ...source, app: "notepad" }) })).status).toBe(400);
+    expect((await req({ method: "POST", path: "/v1/sources", headers: h, body: JSON.stringify({ ...source, content: "" }) })).status).toBe(400);
+    expect((await req({ path: "/v1/sources", headers: { ...h, origin: "https://evil.test" } })).status).toBe(403);
+  });
+
+  it("keeps shared content in memory only", async () => {
+    const token = await pairClient();
+    const h = { origin: ORIGIN, authorization: `Bearer ${token}`, "content-type": "application/json" };
+    await req({ method: "POST", path: "/v1/sources", headers: h, body: JSON.stringify({ ...source, content: "UNIQUE-MARKER-7f3a" }) });
+    c.store.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    for (const f of fs.readdirSync(home)) {
+      const p = path.join(home, f);
+      if (fs.statSync(p).isFile()) expect(fs.readFileSync(p).includes("UNIQUE-MARKER-7f3a")).toBe(false);
+    }
+  });
+});
+
+describe("source expiry", () => {
+  it("expires shared content after the time limit", async () => {
+    let t = Date.now();
+    const h2 = fs.mkdtempSync(path.join(os.tmpdir(), "loai-"));
+    const comp = await startCompanion(loadConfig({ home: h2, port: 0, ollamaUrl: "http://127.0.0.1:9", tlsCertPath: undefined, tlsKeyPath: undefined }), { log: () => {}, now: () => t });
+    const s = comp.sources.add({ app: "excel", scopeLabel: "Sales!A1:B3", content: "a\t1", retrievedAt: t });
+    expect(comp.sources.list()).toHaveLength(1);
+    t += 31 * 60_000;
+    expect(comp.sources.list()).toHaveLength(0);
+    expect(comp.sources.get(s.source!.id)).toBeUndefined();
+    await comp.close();
+    fs.rmSync(h2, { recursive: true, force: true });
+  });
+});
+
+describe("acceptance records", () => {
+  it("stores valid live records as files and lists them; rejects malformed ones", async () => {
+    const token = await pairClient();
+    const h = { origin: ORIGIN, authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const rec = {
+      schema: 1, scenarioId: "word.editor.scoped-edit", title: "t", host: "word", mode: "live", model: { kind: "scripted" },
+      environment: { officeApp: "Word", officeVersion: "16.0.18129", platform: "PC", addinVersion: "0.3.0", recordedAt: "2026-10-13T12:00:00.000Z" },
+      outcome: "passed", checks: [{ id: "a", description: "d", passed: true, evidence: "e" }], visual: "not-applicable", manual: [], durationMs: 10,
+    };
+    const ok = await req({ method: "POST", path: "/v1/acceptance", headers: h, body: JSON.stringify(rec) });
+    expect(ok.status).toBe(201);
+    expect(fs.existsSync(path.join(home, "acceptance", ok.body.stored))).toBe(true);
+    expect((await req({ method: "POST", path: "/v1/acceptance", headers: h, body: JSON.stringify({ ...rec, scenarioId: "../../etc/passwd" }) })).status).toBe(400);
+    expect((await req({ method: "POST", path: "/v1/acceptance", headers: h, body: JSON.stringify({ ...rec, mode: "imagined" }) })).status).toBe(400);
+    const list = await req({ path: "/v1/acceptance", headers: h });
+    expect(list.body.records).toHaveLength(1);
+  });
+});

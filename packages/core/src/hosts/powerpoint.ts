@@ -3,6 +3,7 @@ import { ScopeError, type CapabilityDefinition } from "../registry.js";
 import type { ContextItem, ItemIdentity } from "../types.js";
 import { fingerprint, normalizeText } from "../util.js";
 import { buildCapabilities } from "./powerpoint-build.js";
+import type { RenderedImage } from "./powerpoint-qa.js";
 import { allSupported, type ApiSupportEntry, type HostAdapter, type RequirementChecker, type StateSnapshot } from "./adapter.js";
 import { excerpt, makeItem } from "./common.js";
 
@@ -21,6 +22,8 @@ export interface TextFormat {
   /** "#RRGGBB" */
   color?: string;
   align?: "left" | "center" | "right";
+  /** Font name, when reported (read-only for checks). */
+  font?: string;
 }
 
 export interface PptShape {
@@ -50,6 +53,8 @@ export interface PptSlide {
   id: string;
   index: number; // 0-based
   shapes: PptShape[];
+  /** Name of the slide's layout, when reported (PowerPointApi 1.3). */
+  layoutName?: string;
 }
 
 export interface PowerPointDriver {
@@ -76,6 +81,9 @@ export interface PowerPointDriver {
   supportsNotes(): boolean;
   getNotes(slideId: string): Promise<string | null>;
   setNotes(slideId: string, text: string): Promise<void>;
+  /** Rendered slide images (PowerPointApi 1.8 Slide.getImageAsBase64). */
+  supportsRendering(): boolean;
+  renderSlide(slideId: string, widthPx: number): Promise<RenderedImage>;
 }
 
 function describeShape(sh: PptShape): string {
@@ -119,6 +127,7 @@ export class PowerPointAdapter implements HostAdapter {
       { requirement: "PowerPointApi 1.4", supported: this.req.isSetSupported("PowerPointApi", "1.4"), capabilities: ["presentation.read_slides", "presentation.edit_text", "text boxes"] },
       { requirement: "PowerPointApi 1.5", supported: this.req.isSetSupported("PowerPointApi", "1.5"), capabilities: ["selected slides"] },
       { requirement: "PowerPointApi 1.8", supported: this.d.supportsTables(), capabilities: ["presentation.add_table (native tables)"] },
+      { requirement: "PowerPointApi 1.8 rendering", supported: this.d.supportsRendering(), capabilities: ["presentation.check_rendering (rendered-slide checks)"] },
       { requirement: "Speaker notes", supported: this.d.supportsNotes(), capabilities: [this.d.supportsNotes() ? "presentation.set_notes" : "Not available through Office.js; notes are reported in chat instead"] },
     ];
   }

@@ -2,6 +2,7 @@ export * from "./types.js";
 export * from "./registry.js";
 export * from "./router.js";
 export * from "./shared/planning.js";
+export * from "./shared/plan-scope.js";
 export * from "./shared/evidence.js";
 export * from "./shared/completion.js";
 export * from "./shared/requirements.js";
