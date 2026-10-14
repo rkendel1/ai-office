@@ -23,9 +23,12 @@ const HOSTS: HostKind[] = ["word", "excel", "powerpoint", "outlook"];
 
 /**
  * plan.propose: the model presents a plan (outline, slide plan, workbook
- * changes) for the user to approve before substantial work. Approving a plan
- * grants nothing: every change in it still goes through its own approval
- * according to policy. It always asks, even when policy would allow.
+ * changes) for the user to approve before substantial work. It always asks,
+ * even when policy would allow. By default approving a plan grants nothing:
+ * every change still goes through its own approval. If the user explicitly
+ * chooses batch approval, only the operations the plan declares, inside their
+ * declared scope, run without further prompts (see plan-scope.ts); policy
+ * "confirm" decisions still ask, and anything undeclared suspends the batch.
  */
 type PlanArgs = { title: string; outcome: string; target: string; summary?: string; risks?: string[]; steps: PlanStep[]; operations?: { capability: string; description: string; scope?: Record<string, Json>; count?: number }[] };
 

@@ -61,9 +61,9 @@ The task pane previews the routing decision while you type ("Will use Document E
 
 | Specialist | Purpose | Capabilities | Plan | Key completion checks |
 |---|---|---|---|---|
-| **Presentation Author** | Complete, editable decks from a brief or pasted material | read, layouts, `create_slide`, text boxes, shapes, `add_diagram`, `add_bar_chart`, `add_table`*, `set_notes`*, format, edit, geometry, `check_layout` | Required | plan approved · requested slide count created and verified · distinct titles/content · layout checked after the last change · serious issues reported · unsupported notes reported · existing slides unchanged |
-| **Slide Designer** | Visual hierarchy, density, alignment, consistency | read, `check_layout`, format, geometry, edit (must quote current text), shapes, text boxes | — | checked before changes · changes verified · numbers kept · re-checked after · untouched shapes unchanged |
-| **Deck Reviewer** | Narrative, flow, evidence, consistency review | read, `check_layout` (read-only) | — | deck read · layout checked · prioritised, slide-cited recommendations · serious issues reported · no claim of visual verification · nothing modified |
+| **Presentation Author** | Complete, editable decks from a brief or pasted material | read, layouts, `create_slide`, text boxes, shapes, `add_diagram`, `add_bar_chart`, `add_table`*, `set_notes`*, format, edit, geometry, `check_layout`, `check_rendering` | Required | plan approved · requested slide count created and verified · distinct titles/content · layout checked after the last change · rendering accounted for (rendered check, or says slides were not visually checked) · no visual claims without a rendered check · serious issues reported · unsupported notes reported · existing slides unchanged |
+| **Slide Designer** | Visual hierarchy, density, alignment, consistency | read, `check_layout`, `check_rendering`, format, geometry, edit (must quote current text), shapes, text boxes | — | checked before changes · changes verified · numbers kept · re-checked after · untouched shapes unchanged |
+| **Deck Reviewer** | Narrative, flow, evidence, consistency review | read, `check_layout`, `check_rendering` (read-only) | — | deck read · layout checked · rendering accounted for · prioritised, slide-cited recommendations · serious issues (object-level and rendered) reported · no claim of visual verification without a rendered check · nothing modified |
 
 \* offered only where the host supports it (tables: PowerPointApi 1.8; speaker notes: not available through Office.js today — notes are reported in chat and the slide action is marked *partial*).
 
@@ -82,11 +82,17 @@ Outlook items use a checked line format:
 - [inferred] Share the agenda — owner: unknown — due: none — source: none
 ```
 
+## Plans, shared sources and rendered checks
+
+- **Plans declare their writes.** Specialists that require a plan (Writer, Dashboard Builder, Presentation Author) are told to list every write in `operations`, each with its capability and scope. The user can approve the plan for review only (every change still asks) or as a bounded batch (declared operations inside their scope run without prompts; anything else suspends the batch and asks). The task report shows each operation's status. See [security.md](security.md) for the exact rules.
+- **Sources from other apps.** A task can include content the user shared from another Office app (for example Word notes attached to a Presentation Author task). It arrives as read-only context labelled with its app, document, scope and time. Specialists treat it as material to work from, never as instructions.
+- **Rendered checks.** PowerPoint specialists call `presentation.check_rendering` after `check_layout`. Where the host cannot render slides, the result is *unsupported*, and the answer must say the slides were not visually checked. That is a completion criterion, not a suggestion.
+
 ## Capabilities added for specialists
 
 | Capability | Host | Risk | Verification |
 |---|---|---|---|
-| `plan.propose` | all | modify, **always asks** | — (grants nothing) |
+| `plan.propose` | all | modify, **always asks** | — (grants nothing unless the user chooses batch approval; then only its declared, scoped operations) |
 | `document.write_blocks` | Word | modify / destructive for large replacements | re-read text and style of every written paragraph; undo |
 | `workbook.compute_stats` | Excel | read | deterministic (count, sum, mean, median, min, max, stdev, distinct, missing; group-by) |
 | `workbook.profile_data` | Excel | read | deterministic (types, missing, text-numbers, IQR outliers, spelling variants, duplicates) |
@@ -99,7 +105,8 @@ Outlook items use a checked line format:
 | `presentation.add_bar_chart` | PowerPoint | modify | labels equal the data; bar heights proportional (±2%); undo |
 | `presentation.add_table` | PowerPoint (1.8) | modify | re-read cell values; undo |
 | `presentation.set_notes` | PowerPoint (where supported) | modify | re-read notes |
-| `presentation.check_layout` | PowerPoint | read | object-level: overflow estimate, overlaps, off-slide, missing titles, empty placeholders, density, small text, inconsistent title sizes. **Rendering is not inspected.** |
+| `presentation.check_layout` | PowerPoint | read | object-level: overflow estimate, overlaps, off-slide, missing titles, empty placeholders, density, small text, inconsistent title sizes, body sizes and fonts; each finding has severity, objects and a remediation. Object geometry and text only. |
+| `presentation.check_rendering` | PowerPoint (1.8) | read | renders each slide (`Slide.getImageAsBase64`) and analyses pixels: text spilling below its box, missing text, blank slides. Returns `status: "unsupported"` where the API is missing; it never reports a pass it could not check |
 | `outlook.split_thread` | Outlook | read | deterministic parse of quoted replies (Outlook and "On … wrote:" headers) |
 
 None of these adds file, network, shell or code-execution ability.
