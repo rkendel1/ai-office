@@ -48,8 +48,8 @@ export const DEFAULT_SETTINGS: AssistantSettings = {
   requestTimeoutMs: 180_000,
   contextBudgetChars: 16_000,
   limits: {
-    maxToolCalls: 12,
-    maxModelCalls: 16,
+    maxToolCalls: 40,
+    maxModelCalls: 50,
     maxDurationMs: 10 * 60_000,
     maxContextChars: 400_000,
     retryLimit: 2,

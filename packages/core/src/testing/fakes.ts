@@ -6,7 +6,7 @@
 import { formatRange, parseRange, rangeSize } from "../hosts/a1.js";
 import type { CellValue, ChartKind, ExcelDriver, RangeData, SheetInfo, TableInfo } from "../hosts/excel.js";
 import type { MailItem, OutlookDriver } from "../hosts/outlook.js";
-import type { PowerPointDriver, PptSlide } from "../hosts/powerpoint.js";
+import type { Box, PowerPointDriver, PptShape, PptSlide, ShapeKind, TextFormat } from "../hosts/powerpoint.js";
 import type { WordDriver, WordParagraph, WordStyle } from "../hosts/word.js";
 import type { ChatRequest, ChatResponse, InferenceProvider, ModelDetails, ModelInfo, ToolCall } from "../types.js";
 import { newId } from "../util.js";
@@ -124,24 +124,49 @@ export class FakeExcelDriver implements ExcelDriver {
     if (!s) throw new Error(`No sheet ${name}`);
     return s;
   }
-  /** Evaluate the tiny formula subset used in tests: =SUM(A1:A3), =AVERAGE(..), =A1*2 style refs. */
-  private evaluate(s: Sheet, v: CellValue): CellValue {
+  /**
+   * Evaluate the formula subset used in tests: =SUM|AVERAGE|COUNT|MAX|MIN|MEDIAN(range)
+   * and plain cell references, each optionally prefixed with a sheet name.
+   */
+  private evaluate(s: Sheet, v: CellValue, depth = 0): CellValue {
+    if (typeof v === "string" && v.startsWith("'")) return v.slice(1);
     if (typeof v !== "string" || !v.startsWith("=")) return v;
-    const m = /^=(SUM|AVERAGE|COUNT|MAX|MIN)\(([A-Z]+\d+:[A-Z]+\d+)\)$/i.exec(v);
-    if (m) {
-      const r = parseRange(m[2]!)!;
+    if (depth > 20) return "#REF!";
+    const SHEET = "(?:'([^']+)'|([A-Za-z0-9_]+))!";
+    const fn = new RegExp(`^=(SUM|AVERAGE|COUNT|MAX|MIN|MEDIAN)\\((?:${SHEET})?(\\$?[A-Z]+\\$?\\d+(?::\\$?[A-Z]+\\$?\\d+)?)\\)$`, "i").exec(v);
+    const ref = new RegExp(`^=(?:${SHEET})?(\\$?[A-Z]+\\$?\\d+)$`, "i").exec(v);
+    const target = (quoted?: string, plain?: string) => {
+      const name = quoted ?? plain;
+      return name ? this.sheets.find((x) => x.name === name) : s;
+    };
+    if (fn) {
+      const sh = target(fn[2], fn[3]);
+      if (!sh) return "#REF!";
+      const r = parseRange(fn[4]!.replace(/\$/g, ""))!;
       const nums: number[] = [];
       for (let i = r.start.row; i <= r.end.row; i++)
         for (let j = r.start.col; j <= r.end.col; j++) {
-          const x = this.evaluate(s, s.cells.get(`${i},${j}`) ?? null);
+          const x = this.evaluate(sh, sh.cells.get(`${i},${j}`) ?? null, depth + 1);
           if (typeof x === "number") nums.push(x);
         }
-      const fn = m[1]!.toUpperCase();
-      if (fn === "SUM") return nums.reduce((a, b) => a + b, 0);
-      if (fn === "COUNT") return nums.length;
-      if (fn === "MAX") return nums.length ? Math.max(...nums) : 0;
-      if (fn === "MIN") return nums.length ? Math.min(...nums) : 0;
+      const f = fn[1]!.toUpperCase();
+      if (f === "SUM") return nums.reduce((a, b) => a + b, 0);
+      if (f === "COUNT") return nums.length;
+      if (f === "MAX") return nums.length ? Math.max(...nums) : 0;
+      if (f === "MIN") return nums.length ? Math.min(...nums) : 0;
+      if (f === "MEDIAN") {
+        if (!nums.length) return "#NUM!";
+        const so = [...nums].sort((a, b) => a - b);
+        const m = Math.floor(so.length / 2);
+        return so.length % 2 ? so[m]! : (so[m - 1]! + so[m]!) / 2;
+      }
       return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : "#DIV/0!";
+    }
+    if (ref) {
+      const sh = target(ref[1], ref[2]);
+      if (!sh) return "#REF!";
+      const c = parseRange(ref[3]!.replace(/\$/g, ""))!;
+      return this.evaluate(sh, sh.cells.get(`${c.start.row},${c.start.col}`) ?? null, depth + 1) ?? 0;
     }
     return "#NAME?";
   }
@@ -227,44 +252,141 @@ export class FakeExcelDriver implements ExcelDriver {
 
 // ------------------------------- PowerPoint -------------------------------
 
+export interface FakeShapeInit {
+  name: string;
+  text: string | null;
+  type?: string;
+  box?: Box;
+  format?: TextFormat;
+}
+
+/**
+ * In-memory presentation. Shapes carry geometry and formatting like the
+ * Office.js driver reports them. Layouts mimic the default Office theme's
+ * placeholder names. Notes and tables can be switched off to test the
+ * "not supported" paths.
+ */
 export class FakePowerPointDriver implements PowerPointDriver {
   slidesList: PptSlide[];
+  notes = new Map<string, string>();
+  tables = new Map<string, string[][]>();
   selected: string[] | null = [];
+  notesSupported = true;
+  tablesSupported = true;
+  size = { width: 960, height: 540 };
+  private next = 1000;
+  readonly layoutList = [
+    { id: "L1", name: "Title Slide", masterId: "M1" },
+    { id: "L2", name: "Title and Content", masterId: "M1" },
+    { id: "L3", name: "Title Only", masterId: "M1" },
+    { id: "L4", name: "Two Content", masterId: "M1" },
+    { id: "L5", name: "Blank", masterId: "M1" },
+  ];
 
-  constructor(slides: { shapes: { name: string; text: string | null; type?: string }[] }[], public title = "Deck.pptx") {
-    this.slidesList = slides.map((s, i) => ({
-      id: `s${i + 1}`,
-      index: i,
-      shapes: s.shapes.map((sh, j) => ({ id: `s${i + 1}sh${j + 1}`, name: sh.name, type: sh.type ?? (sh.text === null ? "Image" : "TextBox"), text: sh.text })),
-    }));
+  constructor(slides: { shapes: FakeShapeInit[]; notes?: string }[], public title = "Deck.pptx") {
+    this.slidesList = slides.map((s, i) => {
+      const id = `s${i + 1}`;
+      if (s.notes) this.notes.set(id, s.notes);
+      return {
+        id,
+        index: i,
+        shapes: s.shapes.map((sh, j) => ({
+          id: `s${i + 1}sh${j + 1}`,
+          name: sh.name,
+          type: sh.type ?? (sh.text === null ? "Image" : "TextBox"),
+          text: sh.text,
+          box: sh.box ?? { left: 48, top: 32 + j * 110, width: 864, height: j === 0 ? 80 : 360 },
+          format: sh.format ?? (sh.text === null ? undefined : { size: j === 0 ? 32 : 20, bold: j === 0, italic: false, align: "left" as const, color: "#1B1B1F" }),
+        })),
+      };
+    });
+  }
+  private slide(id: string) {
+    const s = this.slidesList.find((x) => x.id === id);
+    if (!s) throw new Error("slide not found");
+    return s;
+  }
+  private shape(slideId: string, shapeId: string) {
+    const sh = this.slide(slideId).shapes.find((x) => x.id === shapeId);
+    if (!sh) throw new Error("shape not found");
+    return sh;
   }
   async info() {
     return { id: "file:///" + this.title, title: this.title };
   }
   async slides() {
-    return this.slidesList.map((s, i) => ({ ...s, index: i, shapes: s.shapes.map((x) => ({ ...x })) }));
+    return this.slidesList.map((s, i) => ({ ...s, index: i, shapes: s.shapes.map((x) => ({ ...x, box: x.box && { ...x.box }, format: x.format && { ...x.format } })) }));
   }
   async selectedSlideIds() {
     return this.selected;
   }
   async setShapeText(slideId: string, shapeId: string, text: string) {
-    const sh = this.slidesList.find((s) => s.id === slideId)?.shapes.find((x) => x.id === shapeId);
-    if (!sh) throw new Error("not found");
-    sh.text = text;
+    this.shape(slideId, shapeId).text = text;
   }
-  async addSlide() {
-    const id = newId("slide");
-    this.slidesList.push({ id, index: this.slidesList.length, shapes: [] });
+  async addSlide(layout?: { layoutId: string; masterId: string }) {
+    const id = `slide${this.next++}`;
+    const name = this.layoutList.find((l) => l.id === layout?.layoutId)?.name ?? "Blank";
+    const ph = (n: string, box: Box, size: number) => ({ id: `${id}ph${n.replace(/\W/g, "")}`, name: n, type: "Placeholder", text: "", box, format: { size, bold: false, italic: false, align: "left" as const, color: "#1B1B1F" } });
+    const shapes: PptShape[] = [];
+    if (name === "Title Slide") shapes.push(ph("Title 1", { left: 120, top: 160, width: 720, height: 110 }, 44), ph("Subtitle 2", { left: 120, top: 290, width: 720, height: 70 }, 24));
+    if (name === "Title and Content") shapes.push(ph("Title 1", { left: 48, top: 30, width: 864, height: 90 }, 36), ph("Content Placeholder 2", { left: 48, top: 135, width: 864, height: 360 }, 24));
+    if (name === "Title Only") shapes.push(ph("Title 1", { left: 48, top: 30, width: 864, height: 90 }, 36));
+    if (name === "Two Content")
+      shapes.push(ph("Title 1", { left: 48, top: 30, width: 864, height: 90 }, 36), ph("Content Placeholder 2", { left: 48, top: 135, width: 420, height: 360 }, 24), ph("Content Placeholder 3", { left: 492, top: 135, width: 420, height: 360 }, 24));
+    this.slidesList.push({ id, index: this.slidesList.length, shapes });
     return id;
   }
-  async addTextBox(slideId: string, text: string) {
-    const s = this.slidesList.find((x) => x.id === slideId)!;
-    const id = `${slideId}sh${s.shapes.length + 1}`;
-    s.shapes.push({ id, name: `TextBox ${s.shapes.length + 1}`, type: "TextBox", text });
+  async addTextBox(slideId: string, text: string, box: Box, format?: TextFormat) {
+    const s = this.slide(slideId);
+    const id = `${slideId}sh${this.next++}`;
+    s.shapes.push({ id, name: `TextBox ${s.shapes.length + 1}`, type: "TextBox", text, box: { ...box }, format: { size: 18, bold: false, italic: false, align: "left", color: "#000000", ...format } });
     return id;
+  }
+  async addShape(slideId: string, kind: ShapeKind, box: Box, opts: { fill?: string; line?: string; text?: string; format?: TextFormat }) {
+    const s = this.slide(slideId);
+    const id = `${slideId}sh${this.next++}`;
+    s.shapes.push({ id, name: `${kind} ${s.shapes.length + 1}`, type: "GeometricShape", text: opts.text ?? "", box: { ...box }, fill: opts.fill, format: { size: 18, bold: false, italic: false, align: "center", color: "#FFFFFF", ...opts.format } });
+    return id;
+  }
+  async formatText(slideId: string, shapeId: string, format: TextFormat) {
+    const sh = this.shape(slideId, shapeId);
+    sh.format = { ...sh.format, ...format };
+  }
+  async setGeometry(slideId: string, shapeId: string, box: Partial<Box>) {
+    const sh = this.shape(slideId, shapeId);
+    sh.box = { ...sh.box!, ...Object.fromEntries(Object.entries(box).filter(([, v]) => v !== undefined)) };
+  }
+  async deleteShape(slideId: string, shapeId: string) {
+    const s = this.slide(slideId);
+    s.shapes = s.shapes.filter((x) => x.id !== shapeId);
   }
   async deleteSlide(slideId: string) {
     this.slidesList = this.slidesList.filter((s) => s.id !== slideId);
+  }
+  async slideSize() {
+    return { ...this.size, reported: true };
+  }
+  async layouts() {
+    return this.layoutList.map((l) => ({ ...l }));
+  }
+  supportsTables() {
+    return this.tablesSupported;
+  }
+  async addTable(slideId: string, rows: string[][], box: Box) {
+    const s = this.slide(slideId);
+    const id = `${slideId}tbl${this.next++}`;
+    this.tables.set(id, rows.map((r) => [...r]));
+    s.shapes.push({ id, name: `Table ${s.shapes.length + 1}`, type: "Table", text: rows.map((r) => r.join("\t")).join("\n"), box: { ...box } });
+    return id;
+  }
+  supportsNotes() {
+    return this.notesSupported;
+  }
+  async getNotes(slideId: string) {
+    return this.notes.get(slideId) ?? null;
+  }
+  async setNotes(slideId: string, text: string) {
+    this.notes.set(slideId, text);
   }
 }
 

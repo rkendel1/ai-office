@@ -27,7 +27,20 @@ export interface HostAdapter {
   /** Re-check whether a previously inspected item still matches Office state. */
   checkFreshness(item: ContextItem): Promise<Freshness>;
   apiSupport(): ApiSupportEntry[];
+  /**
+   * Compact fingerprint of the host's content, used to prove that content a
+   * task did not target was preserved. Not sent to the model.
+   */
+  snapshot?(): Promise<StateSnapshot>;
 }
+
+/**
+ * - sequence: ordered units (Word paragraphs); compared by alignment.
+ * - map: keyed units (Excel cells, PowerPoint shapes, Outlook body).
+ */
+export type StateSnapshot =
+  | { kind: "sequence"; units: string[] }
+  | { kind: "map"; units: Record<string, string> };
 
 export interface RequirementChecker {
   isSetSupported(name: string, version: string): boolean;

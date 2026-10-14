@@ -3,8 +3,9 @@ import { ScopeError, type CapabilityDefinition } from "../registry.js";
 import type { ContextItem, ItemIdentity, Json, RiskClass } from "../types.js";
 import { fingerprint } from "../util.js";
 import { formatRange, parseRange, rangeSize, splitAddress } from "./a1.js";
-import { allSupported, type ApiSupportEntry, type HostAdapter, type RequirementChecker } from "./adapter.js";
+import { allSupported, type ApiSupportEntry, type HostAdapter, type RequirementChecker, type StateSnapshot } from "./adapter.js";
 import { makeItem } from "./common.js";
+import { STAT_OPS, clean, computeStats, profile, toTable, type CleanOp, type StatOp } from "./excel-analysis.js";
 
 export type CellValue = string | number | boolean | null;
 
@@ -160,6 +161,41 @@ export class ExcelAdapter implements HostAdapter {
       items.push({ ...it, id: "excel:selection", label: `Selection ${sel.sheet}!${sel.address}`, scope: "selection" });
     }
     return items;
+  }
+
+  async snapshot(): Promise<StateSnapshot> {
+    const units: Record<string, string> = {};
+    for (const sh of await this.d.worksheets()) {
+      if (!sh.usedRange) continue;
+      const r = parseRange(sh.usedRange)!;
+      if (rangeSize(r).cells > 50_000) {
+        const d = await this.d.readRange(sh.name, sh.usedRange);
+        units[`${sh.name}!*`] = fingerprint(JSON.stringify(d.formulas));
+        continue;
+      }
+      const d = await this.d.readRange(sh.name, sh.usedRange);
+      d.formulas.forEach((row, i) =>
+        row.forEach((v, j) => {
+          if (v !== null && v !== "") units[`${sh.name}!${formatRange({ start: { row: r.start.row + i, col: r.start.col + j }, end: { row: r.start.row + i, col: r.start.col + j } })}`] = fingerprint(String(v));
+        }),
+      );
+    }
+    return { kind: "map", units };
+  }
+
+  /** Resolve a source range: explicit address, or the sheet's used range. */
+  private async source(sheet: string, address?: string): Promise<{ sheet: string; address: string; startRow: number; startCol: number; values: CellValue[][] }> {
+    let addr = address;
+    if (!addr) {
+      const used = (await this.d.worksheets()).find((s) => s.name === sheet)?.usedRange;
+      if (!used) throw new ScopeError(`${sheet} has no data.`);
+      addr = used;
+    }
+    const r = await this.resolve(sheet, addr);
+    if (r.cells > 100_000) throw new ScopeError("Range is larger than 100,000 cells; choose a smaller range.");
+    const data = await this.d.readRange(r.sheet, r.address);
+    const pr = parseRange(r.address)!;
+    return { sheet: r.sheet, address: r.address, startRow: pr.start.row + 1, startCol: pr.start.col, values: data.values };
   }
 
   async checkFreshness(item: ContextItem): Promise<Freshness> {
@@ -486,6 +522,186 @@ export class ExcelAdapter implements HostAdapter {
         const c = after.find((x) => x.name === name);
         const ok = !!c && after.length === before.length + 1 && (!a.title || c.title === a.title);
         return { output: { chart: name, sheet: target }, verification: { verified: ok, method: "list charts on sheet", evidence: c ? `${c.name} (${c.type})` : undefined } };
+      },
+    });
+
+    const sourceProps = {
+      sheet: { type: "string", minLength: 1, maxLength: 31 },
+      address: { type: "string", minLength: 2, maxLength: 32, description: "Range including the header row; omit for the used range" },
+      hasHeaders: { type: "boolean", description: "First row contains column names (default true)" },
+    } as const;
+
+    type StatsArgs = { sheet: string; address?: string; hasHeaders?: boolean; measures: { column: string; ops: StatOp[] }[]; groupBy?: string };
+    caps.push({
+      name: "workbook.compute_stats",
+      description:
+        "Calculate statistics (count, sum, mean, median, min, max, stdev, distinct, missing) for columns of a range, optionally grouped by a column. Calculated by the application, not estimated: use these results when reporting numbers.",
+      hosts: ["excel"],
+      risk: "read_active",
+      modifies: false,
+      inputSchema: {
+        type: "object",
+        required: ["sheet", "measures"],
+        properties: {
+          ...sourceProps,
+          measures: {
+            type: "array",
+            minItems: 1,
+            maxItems: 20,
+            items: {
+              type: "object",
+              required: ["column", "ops"],
+              properties: { column: { type: "string", minLength: 1 }, ops: { type: "array", minItems: 1, items: { type: "string", enum: STAT_OPS as unknown as Json[] } } },
+            },
+          },
+          groupBy: { type: "string", minLength: 1 },
+        },
+      } as any,
+      async resolveTarget(a: StatsArgs) {
+        const src = await self.source(a.sheet, a.address);
+        return `statistics for ${src.sheet}!${src.address}`;
+      },
+      async execute(a: StatsArgs) {
+        const src = await self.source(a.sheet, a.address);
+        const t = toTable(src.values, a.hasHeaders !== false, src.startRow);
+        const res = computeStats(t, a.measures, src.startCol, a.groupBy);
+        const lines = [res.columns.join("\t"), ...res.rows.map((r) => r.map((v) => (v === null ? "" : String(v))).join("\t"))];
+        const nonNum = Object.entries(res.nonNumericCells).filter(([, n]) => n > 0);
+        const item = makeItem({
+          host: "excel",
+          id: `excel:stats:${fingerprint(JSON.stringify(a))}`,
+          label: `Computed statistics for ${src.sheet}!${src.address}`,
+          scope: "partial",
+          content: `Source: ${src.sheet}!${src.address} (${t.rows.length} data rows)\n${lines.join("\n")}${nonNum.length ? `\nNon-numeric cells ignored: ${nonNum.map(([k, n]) => `${k}: ${n}`).join(", ")}` : ""}`,
+          source: "workbook.compute_stats",
+        });
+        return {
+          output: { source: `${src.sheet}!${src.address}`, dataRows: t.rows.length, columns: res.columns, rows: res.rows as Json, nonNumericCells: res.nonNumericCells as Json },
+          context: [item],
+        };
+      },
+    });
+
+    type ProfileArgs = { sheet: string; address?: string; hasHeaders?: boolean };
+    caps.push({
+      name: "workbook.profile_data",
+      description:
+        "Profile data quality of a range: per-column type, missing values, distinct values, numbers stored as text, IQR outliers (with row numbers), inconsistent category spellings, and duplicate rows.",
+      hosts: ["excel"],
+      risk: "read_active",
+      modifies: false,
+      inputSchema: { type: "object", required: ["sheet"], properties: { ...sourceProps } } as any,
+      async resolveTarget(a: ProfileArgs) {
+        const src = await self.source(a.sheet, a.address);
+        return `data profile of ${src.sheet}!${src.address}`;
+      },
+      async execute(a: ProfileArgs) {
+        const src = await self.source(a.sheet, a.address);
+        const p = profile(toTable(src.values, a.hasHeaders !== false, src.startRow));
+        const lines = [`Source: ${src.sheet}!${src.address}, ${p.rows} data rows`];
+        for (const c of p.columns) {
+          const issues = [
+            c.missing && `${c.missing} missing`,
+            c.numbersStoredAsText && `${c.numbersStoredAsText} numbers stored as text`,
+            c.outliers.length && `outliers at rows ${c.outliers.map((o) => `${o.row} (${o.value})`).join(", ")}`,
+            c.inconsistentCategories.length && `inconsistent spellings: ${c.inconsistentCategories.map((g) => g.map((x) => JSON.stringify(x)).join(" / ")).join("; ")}`,
+            c.type === "mixed" && "mixed types",
+          ].filter(Boolean);
+          lines.push(`- ${c.name} [${c.type}, ${c.distinct} distinct]${issues.length ? ": " + issues.join("; ") : ""}`);
+        }
+        lines.push(p.duplicateRows.length ? `Duplicate rows: ${p.duplicateRows.map((d) => `${d.row} = ${d.duplicateOf}`).join(", ")}` : "Duplicate rows: none");
+        const item = makeItem({ host: "excel", id: `excel:profile:${src.sheet}!${src.address}`, label: `Data profile of ${src.sheet}!${src.address}`, scope: "partial", content: lines.join("\n"), source: "workbook.profile_data" });
+        return { output: { source: `${src.sheet}!${src.address}`, profile: p as unknown as Json }, context: [item] };
+      },
+    });
+
+    type CleanArgs = { sheet: string; address?: string; hasHeaders?: boolean; operations: CleanOp[]; targetSheet: string };
+    caps.push({
+      name: "workbook.clean_to_sheet",
+      description:
+        "Write a cleaned copy of a range to a NEW worksheet, leaving the source untouched. Operations run in order: trim, dedupe {columns?}, drop_missing {columns}, fill_missing {column, value}, normalize_case {column, case}, canonicalize_categories {column}, text_to_number {column}. Row counts and the unchanged source are verified.",
+      hosts: ["excel"],
+      risk: "modify",
+      modifies: true,
+      inputSchema: {
+        type: "object",
+        required: ["sheet", "operations", "targetSheet"],
+        properties: {
+          ...sourceProps,
+          targetSheet: { type: "string", minLength: 1, maxLength: 31, pattern: "^[^\\\\/?*\\[\\]:]+$" },
+          operations: {
+            type: "array",
+            minItems: 1,
+            maxItems: 30,
+            items: {
+              type: "object",
+              required: ["op"],
+              properties: {
+                op: { type: "string", enum: ["trim", "dedupe", "drop_missing", "fill_missing", "normalize_case", "canonicalize_categories", "text_to_number"] },
+                column: { type: "string" },
+                columns: { type: "array", items: { type: "string" } },
+                value: { anyOf: [{ type: "string" }, { type: "number" }] },
+                case: { type: "string", enum: ["lower", "upper", "title"] },
+              },
+            },
+          },
+        },
+      } as any,
+      async resolveTarget(a: CleanArgs) {
+        if ((await self.sheetNames()).some((n) => n.toLowerCase() === a.targetSheet.toLowerCase()))
+          throw new ScopeError(`Worksheet "${a.targetSheet}" already exists; cleaned data must go to a new sheet.`);
+        const src = await self.source(a.sheet, a.address);
+        for (const op of a.operations) {
+          if (["drop_missing"].includes(op.op) && !(op as any).columns?.length) throw new ScopeError("drop_missing needs `columns`.");
+          if (["fill_missing", "normalize_case", "canonicalize_categories", "text_to_number"].includes(op.op) && !(op as any).column)
+            throw new ScopeError(`${op.op} needs \`column\`.`);
+          if (op.op === "fill_missing" && (op as any).value === undefined) throw new ScopeError("fill_missing needs `value`.");
+          if (op.op === "normalize_case" && !(op as any).case) throw new ScopeError("normalize_case needs `case`.");
+        }
+        return `cleaned copy of ${src.sheet}!${src.address} → new sheet "${a.targetSheet}"`;
+      },
+      async preview(a: CleanArgs) {
+        const src = await self.source(a.sheet, a.address);
+        const { report } = clean(toTable(src.values, a.hasHeaders !== false, src.startRow), a.operations, src.startCol);
+        return {
+          summary: `Create sheet "${a.targetSheet}" with a cleaned copy (${report.inputRows} → ${report.outputRows} rows)`,
+          target: `${src.sheet}!${src.address} (unchanged)`,
+          after: report.steps.join("\n"),
+        };
+      },
+      async execute(a: CleanArgs) {
+        const src = await self.source(a.sheet, a.address);
+        const sourceFp = fingerprint(JSON.stringify((await d.readRange(src.sheet, src.address)).formulas));
+        const t = toTable(src.values, a.hasHeaders !== false, src.startRow);
+        const { table, report } = clean(t, a.operations, src.startCol);
+        const out: CellValue[][] = [...(a.hasHeaders !== false ? [table.headers] : []), ...table.rows];
+        await d.addWorksheet(a.targetSheet);
+        let written = "";
+        if (out.length && out[0]!.length) {
+          written = formatRange({ start: { row: 0, col: 0 }, end: { row: out.length - 1, col: out[0]!.length - 1 } });
+          // Write as values: cleaned text must not be re-interpreted as formulas.
+          await d.writeRange(a.targetSheet, written, { values: out.map((r) => r.map((v) => (typeof v === "string" && v.startsWith("=") ? `'${v}` : v))) });
+        }
+        const back = written ? await d.readRange(a.targetSheet, written) : { values: [] as CellValue[][] };
+        const dataRowsBack = back.values.length - (a.hasHeaders !== false ? 1 : 0);
+        let mismatched = 0;
+        out.forEach((r, i) => r.forEach((v, j) => {
+          const got = back.values[i]?.[j] ?? null;
+          const ok = v === got || ((v === null || v === "") && (got === null || got === "")) || (typeof v === "string" && v.startsWith("=") && got === v);
+          if (!ok) mismatched++;
+        }));
+        const sourceUnchanged = fingerprint(JSON.stringify((await d.readRange(src.sheet, src.address)).formulas)) === sourceFp;
+        const invariant = report.outputRows === report.inputRows - report.removedDuplicates - report.droppedMissing;
+        const ok = mismatched === 0 && sourceUnchanged && invariant && dataRowsBack === report.outputRows;
+        return {
+          output: { targetSheet: a.targetSheet, written: written ? `${a.targetSheet}!${written}` : null, report: report as unknown as Json, sourceUnchanged },
+          verification: {
+            verified: ok,
+            method: "re-read cleaned sheet; check row-count invariant and that the source range is unchanged",
+            evidence: `${report.inputRows} rows in → ${report.outputRows} out (−${report.removedDuplicates} duplicates, −${report.droppedMissing} incomplete); source ${sourceUnchanged ? "unchanged" : "CHANGED"}`,
+            mismatch: ok ? undefined : [!sourceUnchanged && "source range changed", !invariant && "row counts do not add up", mismatched && `${mismatched} cell(s) differ`, dataRowsBack !== report.outputRows && "row count on the new sheet differs"].filter(Boolean).join("; "),
+          },
+        };
       },
     });
 

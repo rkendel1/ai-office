@@ -50,6 +50,11 @@ export interface CapabilityDefinition<A extends Record<string, Json> = Record<st
   inputSchema: JsonSchema;
   /** Hidden from the model (e.g. compensation-only operations). */
   internal?: boolean;
+  /**
+   * Always ask the user, even if policy would allow (e.g. plan approval).
+   * Can only make a decision stricter.
+   */
+  alwaysAsk?: boolean;
   /** Validates scope and returns a user-facing target description. Throw ScopeError to reject. */
   resolveTarget?(args: A, ctx: ExecutionContext): Promise<string> | string;
   /** May escalate risk based on actual Office state (e.g. overwriting substantial content). */
@@ -71,6 +76,13 @@ export interface DispatchOptions {
   approver: Approver;
   /** "model" calls may not reach internal capabilities. */
   origin: "model" | "user";
+  /**
+   * Optional narrowing (e.g. the active specialist's allowlist). A capability
+   * outside it is rejected. It can never add capabilities.
+   */
+  allowlist?: ReadonlySet<string>;
+  /** Label for the narrowing source, used in rejection messages. */
+  allowlistLabel?: string;
 }
 
 const RISK_ORDER: RiskClass[] = [
@@ -113,8 +125,10 @@ export class CapabilityRegistry {
     );
   }
 
-  toolSpecs(host: HostKind): ToolSpec[] {
-    return this.list(host).map((d) => ({ name: d.name, description: d.description, parameters: d.inputSchema }));
+  toolSpecs(host: HostKind, allowlist?: ReadonlySet<string>): ToolSpec[] {
+    return this.list(host)
+      .filter((d) => !allowlist || allowlist.has(d.name))
+      .map((d) => ({ name: d.name, description: d.description, parameters: d.inputSchema }));
   }
 
   async dispatch(call: ToolCall, opts: DispatchOptions): Promise<DispatchResult> {
@@ -143,6 +157,8 @@ export class CapabilityRegistry {
     if (!def) return reject(`Unknown capability "${call.name}"`);
     if (def.internal && opts.origin === "model") return reject(`Capability "${call.name}" is not available to the assistant`);
     if (!def.hosts.includes(opts.ctx.host)) return reject(`Capability "${call.name}" is not supported in ${opts.ctx.host}`);
+    if (opts.allowlist && !opts.allowlist.has(def.name))
+      return reject(`Capability "${call.name}" is not available to ${opts.allowlistLabel ?? "the active specialist"}`);
     if (typeof call.arguments !== "object" || call.arguments === null || Array.isArray(call.arguments))
       return reject("Arguments must be an object");
 
@@ -163,7 +179,8 @@ export class CapabilityRegistry {
       // If risk can't be assessed, assume the worst non-prohibited class for modifying actions.
       if (def.modifies) risk = maxRisk(risk, "destructive");
     }
-    const decision = decide(opts.policy, risk);
+    let decision = decide(opts.policy, risk);
+    if (def.alwaysAsk && decision === "allow") decision = "approve";
     const withMeta = { target, risk, decision };
 
     if (decision === "deny") return reject(`Not permitted by policy (${risk})`, withMeta);
