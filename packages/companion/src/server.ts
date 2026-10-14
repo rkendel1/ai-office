@@ -10,7 +10,7 @@ import type { CompanionConfig } from "./config.js";
 import { CompanionStore } from "./store.js";
 import { SourceStore } from "./sources.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 /** Ollama endpoints the companion forwards. Everything else is refused. */
 const OLLAMA_ROUTES: Record<string, "GET" | "POST"> = {
