@@ -1,0 +1,143 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import http from "node:http";
+import https from "node:https";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { loadAdminToken } from "./auth.js";
+import { loadConfig } from "./config.js";
+import { CompanionStore } from "./store.js";
+import { VERSION, startCompanion } from "./server.js";
+
+const HELP = `Local Office AI companion ${VERSION}
+
+Usage: loai-companion <command> [options]
+
+Commands:
+  start [--dev]        Start the companion (serves the add-in and the local API)
+  pair                 Print a one-time pairing code for the Office add-in
+  clients              List paired add-in clients
+  revoke               Revoke all paired clients
+  clear-history        Delete all local task history
+  config               Show the effective configuration and file locations
+
+Options:
+  --port <n>           Port (default 47615)
+  --ollama <url>       Ollama URL (default http://127.0.0.1:11434)
+  --static <dir>       Directory of the built add-in to serve
+`;
+
+function arg(name: string): string | undefined {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+/** The dev-certs tool writes its CA next to the leaf certificate; trust it for CLI calls. */
+function caFor(certPath: string): Buffer {
+  const ca = path.join(path.dirname(certPath), "ca.crt");
+  return fs.readFileSync(fs.existsSync(ca) ? ca : certPath);
+}
+
+function admin(pathname: string, method = "GET"): Promise<any> {
+  const cfg = loadConfig(arg("--port") ? { port: Number(arg("--port")) } : {});
+  const token = loadAdminToken(cfg.home);
+  const tls = !!(cfg.tlsCertPath && cfg.tlsKeyPath);
+  const mod = tls ? https : http;
+  return new Promise((resolve) => {
+    const req = mod.request(
+      {
+        host: "127.0.0.1",
+        port: cfg.port,
+        path: pathname,
+        method,
+        headers: { authorization: `Bearer ${token}` },
+        ...(tls ? { ca: [caFor(cfg.tlsCertPath!), fs.readFileSync(cfg.tlsCertPath!)], servername: "localhost" } : {}),
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          const body = data ? JSON.parse(data) : {};
+          if ((res.statusCode ?? 500) >= 400) {
+            console.error(body.error ?? res.statusCode);
+            process.exit(1);
+          }
+          resolve(body);
+        });
+      },
+    );
+    req.on("error", (e) => {
+      console.error(`Cannot reach the companion on port ${cfg.port}. Is it running? (${e.message})`);
+      process.exit(1);
+    });
+    req.end();
+  });
+}
+
+async function main() {
+  const cmd = process.argv[2] ?? "help";
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  switch (cmd) {
+    case "start": {
+      const defaultStatic = path.resolve(here, "../../addin/dist");
+      const cfg = loadConfig({
+        ...(arg("--port") ? { port: Number(arg("--port")) } : {}),
+        ...(arg("--ollama") ? { ollamaUrl: arg("--ollama") } : {}),
+        staticDir: arg("--static") ?? (fs.existsSync(defaultStatic) ? defaultStatic : undefined),
+      });
+      const c = await startCompanion(cfg);
+      console.log(`Local Office AI companion ${VERSION}`);
+      console.log(`  Listening:  ${c.url} (loopback only)`);
+      console.log(`  Ollama:     ${cfg.ollamaUrl}`);
+      console.log(`  Add-in:     ${cfg.staticDir ? cfg.staticDir : "(not served; use the dev server)"}`);
+      console.log(`  Data:       ${cfg.home}`);
+      if (!c.url.startsWith("https")) console.log("  WARNING: no TLS certificate found. Office on macOS requires HTTPS. Run: npx office-addin-dev-certs install");
+      if (c.store.listClients().length === 0) {
+        const p = c.pairing.issueCode();
+        console.log(`\n  Pairing code: ${p.code}   (enter it in the add-in's Settings; valid 10 minutes)\n`);
+      }
+      const stop = async () => {
+        await c.close();
+        process.exit(0);
+      };
+      process.on("SIGINT", stop);
+      process.on("SIGTERM", stop);
+      break;
+    }
+    case "pair": {
+      const r = await admin("/v1/admin/pairing-code", "POST");
+      console.log(`Pairing code: ${r.code} (valid until ${new Date(r.expiresAt).toLocaleTimeString()})`);
+      break;
+    }
+    case "clients": {
+      const r = await admin("/v1/admin/clients");
+      for (const c of r.clients) console.log(`${c.id}  ${c.name}  paired ${new Date(c.created_at).toLocaleString()}  last seen ${c.last_seen ? new Date(c.last_seen).toLocaleString() : "never"}`);
+      if (!r.clients.length) console.log("No paired clients.");
+      break;
+    }
+    case "revoke": {
+      const r = await admin("/v1/admin/clients", "DELETE");
+      console.log(`Revoked ${r.revoked} client(s).`);
+      break;
+    }
+    case "clear-history": {
+      const cfg = loadConfig();
+      const s = new CompanionStore(cfg.dbPath);
+      await s.clear();
+      s.close();
+      console.log("Local history cleared.");
+      break;
+    }
+    case "config": {
+      console.log(JSON.stringify(loadConfig(), null, 2));
+      break;
+    }
+    default:
+      console.log(HELP);
+  }
+}
+
+main().catch((e) => {
+  console.error(e.message ?? e);
+  process.exit(1);
+});

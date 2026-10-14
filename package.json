@@ -1,0 +1,34 @@
+{
+  "name": "local-office-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first AI assistant embedded in Microsoft Office, powered by Ollama.",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "packages/core",
+    "packages/companion",
+    "packages/addin"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "npm run build -w @loai/core && npm run build -w @loai/companion && npm run build -w @loai/addin",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev:addin": "npm run dev -w @loai/addin",
+    "dev:companion": "npm run dev -w @loai/companion",
+    "start": "npm run start -w @loai/companion",
+    "validate:manifests": "npm run validate -w @loai/addin",
+    "package": "node scripts/package-release.mjs"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^22.10.0",
+    "jsdom": "^26.1.0",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@loai/addin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build && node ../../scripts/make-manifests.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "certs": "office-addin-dev-certs install",
+    "validate": "node ../../scripts/make-manifests.mjs && office-addin-manifest validate dist/manifest.xml && office-addin-manifest validate dist/outlook-manifest.xml"
+  },
+  "dependencies": {
+    "@loai/core": "0.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/office-js": "^1.0.612",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "office-addin-dev-certs": "^3.0.1",
+    "office-addin-manifest": "^3.0.1",
+    "vite": "^8.0.0"
+  }
+}
