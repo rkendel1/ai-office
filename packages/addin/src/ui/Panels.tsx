@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { AssistantSettings, HistoryStore, TaskRecord } from "@loai/core";
+import { ALL_SPECIALISTS, type AssistantSettings, type HistoryStore, type TaskRecord } from "@loai/core";
 import type { HostInfo } from "../services/host";
 import { ActionLine, ApprovalCard, StatusBadge } from "./components";
 import type { useAssistant } from "./useAssistant";
@@ -133,6 +133,7 @@ export function HistoryView({ history, settings }: { history: HistoryStore | nul
             <span className={`badge badge-${r.outcome === "completed" ? "succeeded" : r.outcome === "partial" ? "partial" : r.outcome === "cancelled" ? "cancelled" : "failed"}`}>{r.outcome}</span> {r.request.slice(0, 80)}
             <div className="muted small">
               {new Date(r.startedAt).toLocaleString()} · {r.host}
+              {r.specialist ? ` · ${ALL_SPECIALISTS.find((x) => x.id === r.specialist)?.name ?? r.specialist}` : ""}
               {r.itemTitle ? ` · ${r.itemTitle}` : ""} · {r.model}
             </div>
           </summary>
@@ -143,6 +144,7 @@ export function HistoryView({ history, settings }: { history: HistoryStore | nul
               <StatusBadge status={x.status} approval={x.approval} />
             </div>
           ))}
+          {r.completion?.some((c) => !c.met) && <div className="small warn">Not met: {r.completion.filter((c) => !c.met).map((c) => c.description).join("; ")}</div>}
           {r.errors.length > 0 && <div className="small err">{r.errors.join(" · ")}</div>}
           <div className="small muted hist-text">{r.finalText}</div>
         </details>

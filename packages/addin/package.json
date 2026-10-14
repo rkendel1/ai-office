@@ -1,6 +1,6 @@
 {
   "name": "@loai/addin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,7 @@
     "validate": "node ../../scripts/make-manifests.mjs && office-addin-manifest validate dist/manifest.xml && office-addin-manifest validate dist/outlook-manifest.xml"
   },
   "dependencies": {
-    "@loai/core": "0.1.0",
+    "@loai/core": "0.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

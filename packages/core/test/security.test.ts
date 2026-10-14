@@ -89,6 +89,6 @@ describe("prompt-injection resistance", () => {
   it("the model is never offered capabilities for code, shell, files or network", async () => {
     const s = setup(new WordAdapter(new FakeWordDriver(["a"])), new ScriptedProvider([]));
     const names = s.registry.toolSpecs("word").map((t) => t.name);
-    for (const n of names) expect(n).toMatch(/^(context|selection|document)\./);
+    for (const n of names) expect(n).toMatch(/^(context|selection|document|plan)\./);
   });
 });

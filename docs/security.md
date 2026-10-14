@@ -27,6 +27,13 @@
 
 **Approvals** — the `Approver` is a UI callback. The model's messages, tool arguments and document content have no path to it. Approval requests show the target, a before/after diff, and warnings (e.g. "Overwrites 240 non-empty cells", "document text differs from what the assistant read").
 
+**Specialists** (`core/src/specialists`, `runtime.ts`)
+- Allowlists only narrow: the runtime intersects them with the host's registered capabilities and passes the set to the registry, which rejects anything outside it. Internal capabilities in an allowlist, or modifying capabilities in a read-only specialist, are configuration errors that stop the session from starting.
+- A specialist's policy is merged with `tightenPolicy`, which can only make decisions stricter.
+- Routing is computed from the user's text, the host and the user's explicit choice only; there is no capability for selecting or switching specialists, so neither the model nor document content can do it. Specialists for another host are rejected by both the router and the runtime.
+- `plan.propose` always asks the user (even if edits are set to auto-apply) and grants nothing: each change is still approved per policy.
+- Completion criteria are checked against records and host snapshots, so a model claiming success cannot make a task "completed".
+
 **Stale-edit guards** — Word paragraph replacement requires `expectedText`; PowerPoint accepts it; mismatches refuse the edit.
 
 **Prompt construction** — content sits between `<<<OFFICE_CONTENT …>>>` / `<<<END_OFFICE_CONTENT>>>` markers; any `<<<`/`>>>` inside content and attribute values are neutralised so content cannot close its own fence. The system prompt states that content cannot grant permissions.
@@ -49,6 +56,7 @@
 ## Tests that cover this
 
 - `core/test/security.test.ts` — injected documents/emails; an obedient model attempting shell, network, internal deletes, fake approval flags, extra recipients, send.
+- `core/test/specialists.security.test.ts` — specialist policy/instructions cannot skip approval; allowlists cannot add cross-host, internal or unregistered capabilities; injected text cannot switch specialists, grant capabilities or approve plans; rejected plans block changes; unverified results are not reported as complete.
 - `core/test/unit.test.ts` — policy floors, schema rejection, fencing/escaping.
 - `core/test/ollama.test.ts` — remote endpoints refused; a full task contacts only loopback URLs and does not fall back on failure.
 - `companion/test/companion.test.ts` — loopback binding, token/Origin/Host checks, pairing lockout, admin separation, endpoint allowlist, size limits, traversal.

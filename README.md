@@ -12,13 +12,23 @@ No account, no subscription, no cloud AI. If the local model fails, the task fai
 └───────────────────────────────────────────────────────────────┘        └──────────────────────────────┘
 ```
 
+## Specialists
+
+Fourteen purpose-built assistants share one chat, one runtime and one approval path. Pick one in the task pane or let the router choose from your request (it previews its choice as you type, and asks when a request is ambiguous). See [docs/specialists.md](docs/specialists.md).
+
+| Word | Excel | PowerPoint | Outlook |
+|---|---|---|---|
+| Document Writer · Document Editor · Document Reviewer · Document Summarizer | Data Analyst · Formula Expert · Data Cleaner · Dashboard Builder | Presentation Author · Slide Designer · Deck Reviewer | Thread Analyst · Reply Writer · Action Extractor |
+
+Each specialist narrows the capabilities available, gathers the context it needs, may require an approved plan, and is checked against concrete completion criteria (e.g. every number in an Excel answer must come from application-computed results; untargeted paragraphs must be unchanged; explicit email commitments must be attributable to their author). A task whose checks fail is reported as *partial*, with the reason.
+
 ## What it does
 
 | | Read | Change (with your approval) | Verified by |
 |---|---|---|---|
 | **Word** | selection, paragraphs (chunked), search, structure | replace selection/paragraphs, insert paragraphs, styles/bold/italic | re-reading the affected paragraphs |
-| **Excel** | sheets, used ranges, tables, selection, values + formulas | write values/formulas, add sheet, create table, filter, create chart | re-reading cells / listing tables & charts |
-| **PowerPoint** | slides, shapes, selected slides | edit shape text, add slide | re-reading the shape / new slide |
+| **Excel** | sheets, used ranges, tables, selection, values + formulas; application-computed statistics and data profiles | write values/formulas, add sheet, cleaned copy to a new sheet, create table, filter, create chart | re-reading cells / listing tables & charts; row-count and source-unchanged checks |
+| **PowerPoint** | slides, shapes, positions, formatting, selected slides | slides from layouts, text boxes, shapes, diagrams, bar charts (editable shapes), tables, formatting, geometry, text edits | re-reading slide objects; object-level layout check (not the rendered slide) |
 | **Outlook** | open message and quoted thread | reply draft (read mode) or insert into compose body | re-reading the compose body; reply windows are reported *unverified* because Office cannot read them back |
 
 The assistant **cannot send email**, run code, use the shell, read files, or reach the network. Those capabilities do not exist in the registry, so neither a model nor a document can invoke them.
@@ -29,7 +39,7 @@ Requirements: Node.js ≥ 22.13, Ollama with at least one model (`ollama pull qw
 
 ```bash
 npm install
-npm test                     # 80 automated tests (unit, integration, end-to-end, security, privacy, UI)
+npm test                     # 223 automated tests (unit, integration, end-to-end, specialists, security, privacy, UI)
 npm run build                # core + companion + add-in + manifests
 
 npm run certs -w @loai/addin # once: trusted https://localhost certificate for Office
@@ -71,6 +81,7 @@ docs/                architecture, security, compatibility matrix, testing, trou
 ## Documentation
 
 - [Architecture](docs/architecture.md) — components, request flow, the proposal/execution boundary
+- [Specialists](docs/specialists.md) — the 14 specialists, routing, guarantees and the capabilities they use
 - [Security and privacy](docs/security.md) — threat model and how each safeguard is enforced and tested
 - [Compatibility matrix](docs/compatibility.md) — hosts, platforms, API sets, models
 - [Testing](docs/testing.md) — automated suites and the manual Office acceptance checklist
@@ -78,4 +89,4 @@ docs/                architecture, security, compatibility matrix, testing, trou
 
 ## Status
 
-Version 0.1.0. All automated suites pass, including the spec's acceptance scenarios run against in-memory Office hosts and an HTTP Ollama stand-in, and a UI test that drives the real task pane. The Office.js drivers compile against the official type definitions but **have not yet been exercised inside live Office applications** — run the manual checklist in [docs/testing.md](docs/testing.md) on each platform in the compatibility matrix before calling a release production-ready.
+Version 0.2.0. All automated suites pass, including the spec's acceptance scenarios run against in-memory Office hosts and an HTTP Ollama stand-in, and a UI test that drives the real task pane. The Office.js drivers compile against the official type definitions but **have not yet been exercised inside live Office applications** — this includes every specialist workflow and the new PowerPoint construction capabilities — run the manual checklist in [docs/testing.md](docs/testing.md) on each platform in the compatibility matrix before calling a release production-ready.

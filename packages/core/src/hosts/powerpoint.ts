@@ -1,9 +1,27 @@
 import type { Freshness } from "../context.js";
 import { ScopeError, type CapabilityDefinition } from "../registry.js";
 import type { ContextItem, ItemIdentity } from "../types.js";
-import { normalizeText } from "../util.js";
-import { allSupported, type ApiSupportEntry, type HostAdapter, type RequirementChecker } from "./adapter.js";
+import { fingerprint, normalizeText } from "../util.js";
+import { buildCapabilities } from "./powerpoint-build.js";
+import { allSupported, type ApiSupportEntry, type HostAdapter, type RequirementChecker, type StateSnapshot } from "./adapter.js";
 import { excerpt, makeItem } from "./common.js";
+
+export interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface TextFormat {
+  /** Font size in points. */
+  size?: number;
+  bold?: boolean;
+  italic?: boolean;
+  /** "#RRGGBB" */
+  color?: string;
+  align?: "left" | "center" | "right";
+}
 
 export interface PptShape {
   id: string;
@@ -11,7 +29,22 @@ export interface PptShape {
   type: string;
   /** null = the shape has no text frame (picture, chart, ...) */
   text: string | null;
+  /** Position and size in points, when the host reports them. */
+  box?: Box;
+  /** Formatting of the first text run, when reported. */
+  format?: TextFormat;
+  /** Solid fill colour, when reported. */
+  fill?: string;
 }
+
+export interface PptLayout {
+  id: string;
+  name: string;
+  masterId: string;
+}
+
+export type ShapeKind = "rectangle" | "roundedRectangle" | "ellipse" | "triangle" | "rightArrow" | "chevron" | "pentagon";
+export const SHAPE_KINDS: ShapeKind[] = ["rectangle", "roundedRectangle", "ellipse", "triangle", "rightArrow", "chevron", "pentagon"];
 
 export interface PptSlide {
   id: string;
@@ -25,18 +58,40 @@ export interface PowerPointDriver {
   /** Selected slide ids, or null if the host cannot report selection. */
   selectedSlideIds(): Promise<string[] | null>;
   setShapeText(slideId: string, shapeId: string, text: string): Promise<void>;
-  /** Adds a slide at the end; returns its id. */
-  addSlide(): Promise<string>;
-  addTextBox(slideId: string, text: string, box: { left: number; top: number; width: number; height: number }): Promise<string>;
+  /** Adds a slide at the end (optionally from a layout); returns its id. */
+  addSlide(layout?: { layoutId: string; masterId: string }): Promise<string>;
+  addTextBox(slideId: string, text: string, box: Box, format?: TextFormat): Promise<string>;
   deleteSlide(slideId: string): Promise<void>;
+  /** Slide size in points (16:9 default 960×540 when the host cannot report it). */
+  slideSize(): Promise<{ width: number; height: number; reported: boolean }>;
+  layouts(): Promise<PptLayout[]>;
+  addShape(slideId: string, kind: ShapeKind, box: Box, opts: { fill?: string; line?: string; text?: string; format?: TextFormat }): Promise<string>;
+  formatText(slideId: string, shapeId: string, format: TextFormat): Promise<void>;
+  setGeometry(slideId: string, shapeId: string, box: Partial<Box>): Promise<void>;
+  deleteShape(slideId: string, shapeId: string): Promise<void>;
+  /** Native tables (PowerPointApi 1.8). */
+  supportsTables(): boolean;
+  addTable(slideId: string, rows: string[][], box: Box): Promise<string>;
+  /** Speaker notes. Not exposed by Office.js today; drivers report false. */
+  supportsNotes(): boolean;
+  getNotes(slideId: string): Promise<string | null>;
+  setNotes(slideId: string, text: string): Promise<void>;
 }
 
-function renderSlide(s: PptSlide): string {
+function describeShape(sh: PptShape): string {
+  const geo = sh.box ? ` @${Math.round(sh.box.left)},${Math.round(sh.box.top)} ${Math.round(sh.box.width)}×${Math.round(sh.box.height)}` : "";
+  const f = sh.format;
+  const fmt = f ? [f.size && `${f.size}pt`, f.bold && "bold", f.italic && "italic", f.align && f.align !== "left" && f.align].filter(Boolean).join(" ") : "";
+  return `[${sh.type}${geo}${fmt ? `, ${fmt}` : ""}]`;
+}
+
+export function renderSlide(s: PptSlide, notes?: string | null): string {
   const lines = [`Slide ${s.index + 1} (id ${s.id})`];
   for (const sh of s.shapes) {
-    if (sh.text === null) lines.push(`  - shape ${sh.id} "${sh.name}" [${sh.type}, no text]`);
-    else lines.push(`  - shape ${sh.id} "${sh.name}": ${sh.text.replace(/\r?\n|\r|\u000b/g, " / ")}`);
+    if (sh.text === null) lines.push(`  - shape ${sh.id} "${sh.name}" ${describeShape(sh)} no text`);
+    else lines.push(`  - shape ${sh.id} "${sh.name}" ${describeShape(sh)}: ${sh.text.replace(/\r?\n|\r|\u000b/g, " / ")}`);
   }
+  if (notes) lines.push(`  notes: ${notes.replace(/\r?\n/g, " / ")}`);
   return lines.join("\n");
 }
 
@@ -63,7 +118,8 @@ export class PowerPointAdapter implements HostAdapter {
       { requirement: "PowerPointApi 1.3", supported: this.req.isSetSupported("PowerPointApi", "1.3"), capabilities: ["presentation.add_slide"] },
       { requirement: "PowerPointApi 1.4", supported: this.req.isSetSupported("PowerPointApi", "1.4"), capabilities: ["presentation.read_slides", "presentation.edit_text", "text boxes"] },
       { requirement: "PowerPointApi 1.5", supported: this.req.isSetSupported("PowerPointApi", "1.5"), capabilities: ["selected slides"] },
-      { requirement: "Speaker notes", supported: false, capabilities: ["Not available through Office.js; not offered"] },
+      { requirement: "PowerPointApi 1.8", supported: this.d.supportsTables(), capabilities: ["presentation.add_table (native tables)"] },
+      { requirement: "Speaker notes", supported: this.d.supportsNotes(), capabilities: [this.d.supportsNotes() ? "presentation.set_notes" : "Not available through Office.js; notes are reported in chat instead"] },
     ];
   }
 
@@ -71,12 +127,13 @@ export class PowerPointAdapter implements HostAdapter {
     const all = await this.d.slides();
     const chosen = ids ? all.filter((s) => ids.includes(s.id)) : all;
     const full = !ids || chosen.length === all.length;
+    const notes = this.d.supportsNotes() ? await Promise.all(chosen.map((x) => this.d.getNotes(x.id).catch(() => null))) : [];
     return makeItem({
       host: "powerpoint",
       id: full ? "ppt:slides:all" : `ppt:slides:${chosen.map((s) => s.id).join(",")}`,
       label: full ? `All ${all.length} slides` : `Slides ${chosen.map((s) => s.index + 1).join(", ")} of ${all.length}`,
       scope: full ? "full" : "partial",
-      content: chosen.map(renderSlide).join("\n\n") || "(no slides)",
+      content: chosen.map((x, i) => renderSlide(x, notes[i])).join("\n\n") || "(no slides)",
       unsupported: unsupportedOf(chosen),
       truncated: !full,
       source: "presentation.read_slides",
@@ -104,6 +161,13 @@ export class PowerPointAdapter implements HostAdapter {
       items.push({ ...it, id: "ppt:selection", label: `Selected ${it.label}`, scope: "selection" });
     }
     return items;
+  }
+
+  async snapshot(): Promise<StateSnapshot> {
+    const units: Record<string, string> = {};
+    for (const sl of await this.d.slides())
+      for (const sh of sl.shapes) units[`${sl.id}/${sh.id}`] = fingerprint(JSON.stringify([sh.text, sh.box, sh.format, sh.fill]));
+    return { kind: "map", units };
   }
 
   async checkFreshness(item: ContextItem): Promise<Freshness> {
@@ -265,6 +329,7 @@ export class PowerPointAdapter implements HostAdapter {
         },
       });
     }
+    caps.push(...buildCapabilities(d, this.req));
     return caps;
   }
 }

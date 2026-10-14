@@ -3,7 +3,10 @@ import { minimizeRecord, type HistoryStore, type TaskOutcome, type TaskRecord } 
 import type { HostAdapter } from "./hosts/adapter.js";
 import { InferenceError } from "./inference/ollama.js";
 import { describeToolsAsText, extractToolCalls } from "./inference/toolcalls.js";
-import type { Approver } from "./permissions.js";
+import { stricter, type ApprovalPolicy, type Approver } from "./permissions.js";
+import { specialistPrompt } from "./specialists/index.js";
+import { isApprovedPlan, planFrom, type Plan } from "./specialists/shared/planning.js";
+import type { Specialist, TaskEvidence } from "./specialists/types.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { CapabilityRegistry } from "./registry.js";
 import type { AssistantSettings } from "./settings.js";
@@ -36,7 +39,17 @@ export type RuntimeEvent =
   | { type: "action_started"; call: ToolCall }
   | { type: "action"; record: ExecutionRecord }
   | { type: "context"; items: ContextItem[] }
-  | { type: "notice"; level: "info" | "warning" | "error"; text: string };
+  | { type: "notice"; level: "info" | "warning" | "error"; text: string }
+  | { type: "specialist"; id: string; name: string }
+  | { type: "plan"; plan: Plan };
+
+export interface CompletionResult {
+  id: string;
+  description: string;
+  required: boolean;
+  met: boolean;
+  detail?: string;
+}
 
 export interface TaskReport {
   id: string;
@@ -49,6 +62,24 @@ export interface TaskReport {
   errors: string[];
   limitReached?: string;
   contextUsed: ContextItem[];
+  /** Present when a specialist handled the task. */
+  specialist?: { id: string; name: string };
+  /** Specialist completion criteria, evaluated against observed results. */
+  completion?: CompletionResult[];
+  /** The approved plan, if any. */
+  plan?: Plan;
+  /** Limitations that affected this task (unavailable capabilities, missing context, unmet criteria). */
+  limitations: string[];
+  /** The assistant asked a question and made no changes: the task waits for the user's answer. */
+  awaitingInput?: boolean;
+}
+
+/** Apply a specialist's stricter policy on top of the user's. It can never loosen. */
+export function tightenPolicy(base: ApprovalPolicy, extra?: Partial<ApprovalPolicy>): ApprovalPolicy {
+  if (!extra) return base;
+  const out = { ...base };
+  for (const k of Object.keys(base) as (keyof ApprovalPolicy)[]) if (extra[k]) out[k] = stricter(base[k], extra[k]!);
+  return out;
 }
 
 export interface AgentRuntimeDeps {
@@ -95,7 +126,7 @@ export class AgentRuntime {
    * Run one user task through the bounded loop:
    * context → model → (validate/authorize/execute/verify)* → report.
    */
-  async run(request: string, opts: { signal?: AbortSignal; onEvent?: (e: RuntimeEvent) => void } = {}): Promise<TaskReport> {
+  async run(request: string, opts: { signal?: AbortSignal; onEvent?: (e: RuntimeEvent) => void; specialist?: Specialist } = {}): Promise<TaskReport> {
     if (this.running) throw new Error("A task is already running");
     this.running = true;
     const now = this.deps.now ?? Date.now;
@@ -115,11 +146,20 @@ export class AgentRuntime {
     const userRejected = new Set<string>();
     let charsSent = 0;
     let modelCalls = 0;
+    const spec = opts.specialist;
+    const taskContext = new Map<string, ContextItem>();
+    const limitations: string[] = [];
+    let before: Awaited<ReturnType<NonNullable<HostAdapter["snapshot"]>>> | undefined;
+    let allowlist: Set<string> | undefined;
+    const planRequired = spec ? (typeof spec.constraints.requirePlan === "function" ? spec.constraints.requirePlan(request) : !!spec.constraints.requirePlan) : false;
+    const policy = tightenPolicy(settings.policy, spec?.approval.policy);
+    const maxToolCalls = Math.min(settings.limits.maxToolCalls, spec?.constraints.maxToolCalls ?? Number.POSITIVE_INFINITY);
 
     const setState = (state: TaskState, detail?: string) => emit({ type: "state", state, detail });
 
     try {
       if (!settings.model) throw new InferenceError("model_not_found", "No model selected. Choose an installed model in Settings.");
+      if (spec && spec.host !== adapter.host) throw new Error(`${spec.name} works in ${spec.host}; it cannot run in ${adapter.host}.`);
       const identity = await adapter.identity();
 
       // 1. Context: freshness of previously inspected items + minimal initial context.
@@ -134,13 +174,44 @@ export class AgentRuntime {
       }
       const initial = await adapter.initialContext();
       context.register(initial);
+      for (const it of initial) taskContext.set(it.id, it);
       emit({ type: "context", items: initial });
+
+      // 1b. Specialist: narrow capabilities, acquire required context, snapshot state.
+      if (spec) {
+        const registered = new Set(registry.list(adapter.host).map((d) => d.name));
+        allowlist = new Set(spec.capabilities.filter((c) => registered.has(c)));
+        const unavailable = spec.capabilities.filter((c) => !registered.has(c));
+        if (unavailable.length) limitations.push(`Not available in this Office version: ${unavailable.join(", ")}`);
+        emit({ type: "specialist", id: spec.id, name: spec.name });
+        for (const req of spec.context.required) {
+          const fresh = () => context.inspected().filter((i) => i.host === adapter.host && i.freshness !== "stale");
+          if (req.satisfiedBy(fresh())) continue;
+          if (req.acquire && allowlist.has(req.acquire.capability)) {
+            const out = await registry.dispatch(
+              { id: newId("ctx"), name: req.acquire.capability, arguments: req.acquire.arguments },
+              { ctx: { host: adapter.host, identity, signal }, policy, origin: "model", approver: this.deps.approver, allowlist, allowlistLabel: spec.name },
+            );
+            actions.push(out.record);
+            emit({ type: "action", record: out.record });
+            if (out.context.length) {
+              context.register(out.context);
+              for (const it of out.context) taskContext.set(it.id, it);
+              emit({ type: "context", items: out.context });
+            }
+          }
+          if (!req.satisfiedBy(fresh())) limitations.push(`Required context not available: ${req.description}`);
+        }
+        if (spec.snapshot && adapter.snapshot) before = await adapter.snapshot().catch(() => undefined);
+      }
 
       // 2. Model + tool protocol.
       const details = await this.details(settings.model, signal);
       const nativeTools = settings.preferNativeTools && !!details?.capabilities.includes("tools");
-      const tools = registry.toolSpecs(adapter.host);
-      const system = buildSystemPrompt(adapter.host, nativeTools ? {} : { textTools: describeToolsAsText(tools) });
+      const tools = registry.toolSpecs(adapter.host, allowlist);
+      const system =
+        buildSystemPrompt(adapter.host, nativeTools ? {} : { textTools: describeToolsAsText(tools) }) +
+        (spec ? "\n\n" + specialistPrompt(spec, [...allowlist!], spec.capabilities.filter((c) => !allowlist!.has(c)), planRequired) : "");
       const capacityTokens = Math.min(
         settings.generation.numCtx ?? 8192,
         details?.contextLength ?? Number.POSITIVE_INFINITY,
@@ -151,7 +222,10 @@ export class AgentRuntime {
 
       const buildMessages = (): ChatMessage[] => {
         const pkg = context.buildPackage(adapter.host, identity, budget);
-        for (const it of pkg.items) usedContext.set(it.id, it);
+        for (const it of pkg.items) {
+          usedContext.set(it.id, it);
+          taskContext.set(it.id, it);
+        }
         const stale = context
           .inspected()
           .filter((i) => i.freshness === "stale")
@@ -227,7 +301,7 @@ export class AgentRuntime {
         const skipped = parsed.toolCalls.length - 1;
         transcript.push({ role: "assistant", content: parsed.text, toolCalls: [call] });
 
-        if (actions.length >= settings.limits.maxToolCalls) {
+        if (actions.length >= maxToolCalls) {
           limitReached = "capability call limit";
           break;
         }
@@ -235,8 +309,11 @@ export class AgentRuntime {
         const key = call.name + stableStringify(call.arguments);
         let record: ExecutionRecord;
         let newContext: ContextItem[] = [];
+        const guarded = spec ? this.guardReason(spec, call, request, actions, planRequired) : undefined;
         if (userRejected.has(key)) {
           record = syntheticReject(call, "The user already rejected this exact change in this task. Do not propose it again.");
+        } else if (guarded) {
+          record = syntheticReject(call, guarded);
         } else if ((failures.get(key) ?? 0) > settings.limits.retryLimit) {
           record = syntheticReject(call, `Retry limit reached for this operation (${settings.limits.retryLimit}).`);
         } else {
@@ -244,8 +321,10 @@ export class AgentRuntime {
           setState("executing", call.name);
           const out = await registry.dispatch(call, {
             ctx: { host: adapter.host, identity, signal },
-            policy: settings.policy,
+            policy,
             origin: "model",
+            allowlist,
+            allowlistLabel: spec ? `the ${spec.name}` : undefined,
             approver: async (req, s) => {
               setState("awaiting_approval", req.capability);
               try {
@@ -263,7 +342,12 @@ export class AgentRuntime {
         emit({ type: "action", record });
         if (newContext.length) {
           context.register(newContext);
+          for (const it of newContext) taskContext.set(it.id, it);
           emit({ type: "context", items: newContext });
+        }
+        if (isApprovedPlan(record)) {
+          const plan = planFrom(record);
+          if (plan) emit({ type: "plan", plan });
         }
         const def = registry.get(call.name);
         if (def?.modifies && record.status !== "rejected" && record.status !== "cancelled") context.markHostStale(adapter.host);
@@ -293,8 +377,40 @@ export class AgentRuntime {
     }
 
     const cancelled = !!signal?.aborted;
-    const outcome = computeOutcome({ actions, registry, cancelled, fatal, limitReached });
-    const executionSummary = summarize(actions, registry, limitReached, cancelled);
+    let outcome = computeOutcome({ actions, registry, cancelled, fatal, limitReached });
+    let executionSummary = summarize(actions, registry, limitReached, cancelled);
+    const modified = actions.some((a) => registry.get(a.capability)?.modifies && ["succeeded", "unverified", "partial", "failed"].includes(a.status));
+    const awaitingInput = !!spec && outcome === "completed" && !modified && /\?\s*$/.test(finalText.trim());
+
+    let completion: CompletionResult[] | undefined;
+    if (spec && !awaitingInput) {
+      const after = before && adapter.snapshot ? await adapter.snapshot().catch(() => undefined) : undefined;
+      const evidence: TaskEvidence = {
+        request,
+        actions,
+        text: finalText,
+        context: [...taskContext.values()],
+        before,
+        after,
+        outcome,
+        isModifying: (n) => !!registry.get(n)?.modifies,
+      };
+      completion = spec.completion.map((c) => {
+        try {
+          return { id: c.id, description: c.description, required: c.required, ...c.evaluate(evidence) };
+        } catch (e) {
+          return { id: c.id, description: c.description, required: c.required, met: false, detail: `could not be checked: ${errorMessage(e)}` };
+        }
+      });
+      const unmet = completion.filter((c) => c.required && !c.met);
+      if (unmet.length) {
+        if (outcome === "completed") outcome = "partial";
+        executionSummary += " " + unmet.map((c) => `Not met: ${c.description}${c.detail ? ` (${c.detail})` : ""}.`).join(" ");
+        limitations.push(...unmet.map((c) => `${c.description}: ${c.detail ?? "not met"}`));
+      }
+    }
+    if (awaitingInput) executionSummary = "Waiting for your answer before continuing. " + executionSummary;
+    const plan = actions.filter(isApprovedPlan).map(planFrom).filter((p): p is Plan => !!p).at(-1);
     if (limitReached) emit({ type: "notice", level: "warning", text: `Stopped: ${limitReached} reached.` });
 
     if (outcome !== "failed" || finalText) {
@@ -311,6 +427,11 @@ export class AgentRuntime {
       errors,
       limitReached,
       contextUsed: [...usedContext.values()],
+      specialist: spec ? { id: spec.id, name: spec.name } : undefined,
+      completion,
+      plan,
+      limitations,
+      awaitingInput,
     };
     setState(outcome === "completed" ? "completed" : outcome);
     await this.record(report, request, startedAt);
@@ -336,6 +457,15 @@ export class AgentRuntime {
     return out.record;
   }
 
+  /** Specialist-level narrowing: plan requirement and the specialist's own guard. */
+  private guardReason(spec: Specialist, call: ToolCall, request: string, actions: ExecutionRecord[], planRequired: boolean): string | undefined {
+    const def = this.deps.registry.get(call.name);
+    const planApproved = actions.some(isApprovedPlan);
+    if (planRequired && def?.modifies && !planApproved)
+      return `The ${spec.name} needs an approved plan before making changes. Call plan.propose with the outline first.`;
+    return spec.guard?.(call, { request, actions, planApproved });
+  }
+
   private async record(report: TaskReport, request: string, startedAt: number) {
     const s = this.deps.settings();
     if (!this.deps.history || !s.historyEnabled) return;
@@ -351,6 +481,8 @@ export class AgentRuntime {
       outcome: report.outcome,
       finalText: report.text || report.executionSummary,
       errors: report.errors,
+      specialist: report.specialist?.id,
+      completion: report.completion?.map((c) => ({ id: c.id, description: c.description, met: c.met, detail: c.detail })),
       startedAt,
       finishedAt: Date.now(),
     };

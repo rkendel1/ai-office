@@ -1,8 +1,8 @@
 import type { Freshness } from "../context.js";
 import { CapabilityUnsupportedError, ScopeError, type CapabilityDefinition } from "../registry.js";
-import type { ContextItem, ItemIdentity, Json, RiskClass, UnsupportedContent } from "../types.js";
+import type { Compensation, ContextItem, ItemIdentity, Json, RiskClass, UnsupportedContent } from "../types.js";
 import { fingerprint, normalizeText } from "../util.js";
-import { allSupported, type ApiSupportEntry, type HostAdapter, type RequirementChecker } from "./adapter.js";
+import { allSupported, type ApiSupportEntry, type HostAdapter, type RequirementChecker, type StateSnapshot } from "./adapter.js";
 import { excerpt, makeItem } from "./common.js";
 
 // ---------------------------------------------------------------------------
@@ -171,6 +171,12 @@ export class WordAdapter implements HostAdapter {
     const sel = await this.selectionItem();
     if (sel) items.push(sel);
     return items;
+  }
+
+  async snapshot(): Promise<StateSnapshot> {
+    const total = await this.d.paragraphCount();
+    const paras = total ? await this.d.readParagraphs(0, total) : [];
+    return { kind: "sequence", units: paras.map((p) => fingerprint(`${p.style ?? ""}|${p.text}`)) };
   }
 
   async checkFreshness(item: ContextItem): Promise<Freshness> {
@@ -550,6 +556,146 @@ export class WordAdapter implements HostAdapter {
                   args: { start: a.start, end, style: prevStyle },
                 }
               : undefined,
+        };
+      },
+    });
+
+    type Block = { text: string; style?: WordStyle };
+    type BlocksArgs = {
+      mode: "insert" | "replace";
+      position?: "start" | "end" | "before_paragraph" | "after_paragraph";
+      paragraphIndex?: number;
+      start?: number;
+      end?: number;
+      expectedText?: string;
+      blocks: Block[];
+    };
+    const renderBlocks = (blocks: Block[]) => blocks.map((b) => (b.style && b.style !== "Normal" ? `[${b.style}] ${b.text}` : b.text)).join("\n");
+    caps.push({
+      name: "document.write_blocks",
+      description:
+        "Write a structured section in one action: a list of paragraphs, each with its own built-in style (Title, Heading1-3, Normal, Quote, ListParagraph). mode \"insert\" adds them at a position; mode \"replace\" replaces paragraphs start..end (requires expectedText = their current text joined by newlines). Use for outlines, drafted sections and restructured documents.",
+      hosts: ["word"],
+      risk: "modify",
+      modifies: true,
+      inputSchema: {
+        type: "object",
+        required: ["mode", "blocks"],
+        properties: {
+          mode: { type: "string", enum: ["insert", "replace"] },
+          position: { type: "string", enum: ["start", "end", "before_paragraph", "after_paragraph"] },
+          paragraphIndex: { type: "integer", minimum: 0 },
+          start: { type: "integer", minimum: 0 },
+          end: { type: "integer", minimum: 0 },
+          expectedText: { type: "string", maxLength: 200_000 },
+          blocks: {
+            type: "array",
+            minItems: 1,
+            maxItems: 300,
+            items: {
+              type: "object",
+              required: ["text"],
+              properties: {
+                text: { type: "string", maxLength: 20_000, pattern: "^[^\\n\\r]*$" },
+                style: { type: "string", enum: WORD_STYLES as unknown as Json[] },
+              },
+            },
+          },
+        },
+      },
+      async resolveTarget(a: BlocksArgs) {
+        if (a.mode === "replace") {
+          if (a.start === undefined || a.expectedText === undefined) throw new ScopeError("replace mode requires start and expectedText.");
+          await self.assertRange(a.start, a.end ?? a.start);
+          return `replace paragraphs ${a.start}–${a.end ?? a.start} with ${a.blocks.length} paragraph(s)`;
+        }
+        const pos = a.position ?? "end";
+        if (pos === "before_paragraph" || pos === "after_paragraph") {
+          if (a.paragraphIndex === undefined) throw new ScopeError("`paragraphIndex` is required for this position.");
+          await self.assertRange(a.paragraphIndex, a.paragraphIndex);
+          return `insert ${a.blocks.length} paragraph(s) ${pos === "before_paragraph" ? "before" : "after"} paragraph ${a.paragraphIndex}`;
+        }
+        return `insert ${a.blocks.length} paragraph(s) at the ${pos} of the document`;
+      },
+      async assessRisk(a: BlocksArgs): Promise<RiskClass> {
+        if (a.mode !== "replace") return "modify";
+        const before = await self.textOf(a.start!, a.end ?? a.start!);
+        return before.length >= SUBSTANTIAL_CHARS ? "destructive" : "modify";
+      },
+      async preview(a: BlocksArgs) {
+        const before = a.mode === "replace" ? await self.textOf(a.start!, a.end ?? a.start!) : undefined;
+        const warnings: string[] = [];
+        if (before !== undefined && normalizeText(before) !== normalizeText(a.expectedText ?? ""))
+          warnings.push("The document text differs from what the assistant read. This change will be refused.");
+        const headings = a.blocks.filter((b) => b.style && /Heading|Title/.test(b.style)).length;
+        return {
+          summary: `${a.mode === "replace" ? "Replace with" : "Insert"} ${a.blocks.length} paragraph(s)${headings ? `, ${headings} heading(s)` : ""}`,
+          target: a.mode === "replace" ? `Paragraphs ${a.start}–${a.end ?? a.start}` : (a.position ?? "end").replace("_", " "),
+          before: before !== undefined ? excerpt(before, 4000) : undefined,
+          after: excerpt(renderBlocks(a.blocks), 4000),
+          warnings,
+        };
+      },
+      async execute(a: BlocksArgs) {
+        let at: number;
+        let oldParas: WordParagraph[] = [];
+        if (a.mode === "replace") {
+          const end = a.end ?? a.start!;
+          const before = await self.textOf(a.start!, end);
+          if (normalizeText(before) !== normalizeText(a.expectedText!))
+            throw new Error("The paragraphs no longer contain the expected text. Re-read and try again.");
+          oldParas = await d.readParagraphs(a.start!, end + 1);
+          at = a.start!;
+        } else {
+          const count = await d.paragraphCount();
+          const pos = a.position ?? "end";
+          at = pos === "start" ? 0 : pos === "end" ? count : pos === "before_paragraph" ? a.paragraphIndex! : a.paragraphIndex! + 1;
+        }
+        // Insert style groups in order. In replace mode new text goes in before the old
+        // paragraphs, which are then removed (Word always keeps at least one paragraph).
+        let idx = at;
+        let i = 0;
+        while (i < a.blocks.length) {
+          const style = a.blocks[i]!.style ?? "Normal";
+          const group: string[] = [];
+          while (i < a.blocks.length && (a.blocks[i]!.style ?? "Normal") === style) group.push(a.blocks[i++]!.text);
+          const count = await d.paragraphCount();
+          await d.insertParagraphs(idx >= count ? "end" : { before: idx }, group, style);
+          idx += group.length;
+        }
+        const n = a.blocks.length;
+        if (a.mode === "replace") await d.deleteParagraphs(at + n, at + n + oldParas.length - 1);
+        const after = await d.readParagraphs(at, at + n);
+        const mismatches = a.blocks.filter((b, k) => {
+          const p = after[k];
+          return !p || normalizeText(p.text) !== normalizeText(b.text) || (b.style !== undefined && p.style !== b.style);
+        }).length;
+        const total = await d.paragraphCount();
+        return {
+          output: { paragraphs: `${at}–${at + n - 1}`, written: n, headings: a.blocks.filter((b) => b.style && /Heading|Title/.test(b.style)).length, documentParagraphs: total },
+          verification: {
+            verified: mismatches === 0,
+            method: "re-read written paragraphs (text and style)",
+            evidence: excerpt(after.map((p) => p.text).join("\n"), 200),
+            mismatch: mismatches ? `${mismatches} paragraph(s) do not match the requested text or style.` : undefined,
+          },
+          compensation: (a.mode === "replace"
+              ? {
+                  description: `Restore the previous ${oldParas.length} paragraph(s)`,
+                  capability: "document.write_blocks",
+                  args: {
+                    mode: "replace",
+                    start: at,
+                    end: at + n - 1,
+                    expectedText: a.blocks.map((b) => b.text).join("\n"),
+                    blocks: oldParas.map((p) => ({ text: p.text, ...(p.style && (WORD_STYLES as string[]).includes(p.style) ? { style: p.style } : {}) })) as Json,
+                  },
+                }
+              : {
+                  description: `Remove the ${n} inserted paragraph(s)`,
+                  capability: "document.delete_paragraphs",
+                  args: { start: at, end: at + n - 1, expectedText: a.blocks.map((b) => b.text).join("\n") },
+                }) as Compensation,
         };
       },
     });

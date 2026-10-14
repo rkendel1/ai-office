@@ -16,6 +16,11 @@ npx vitest run packages/core/test/security.test.ts   # one suite
 | `core/test/ollama.test.ts` | Ollama connectivity, discovery, streaming, tool-call format, error classification, remote refusal; **privacy**: a full task only contacts loopback and does not fall back |
 | `companion/test/companion.test.ts` | companion auth, origin/host checks, pairing, admin separation, proxy allowlist, history CRUD, settings floors, diagnostics |
 | `addin/test/ui.test.tsx` | renders the real task pane (jsdom) and drives ask → propose → approve → apply → verify through the UI |
+| `core/test/specialists.test.ts` | every specialist's contract, allowlist validity, read-only enforcement, context acquisition; each example prompt routes to its own specialist; routing (selection, host mismatch, ambiguity, fallback, subsumption); switching keeps conversation and re-applies capabilities |
+| `core/test/specialists.execution.test.ts` | complete workflows for all 14 specialists, including negative cases (dropped facts, ungrounded numbers, formula errors, misattributed commitments, missed deck problems, unsupported notes) |
+| `core/test/specialists.security.test.ts` | specialists cannot widen permissions; injection cannot switch specialists or approve plans; plan approval grants nothing |
+| `core/test/capabilities.test.ts` | every capability added for specialists (structured writing, statistics/profiling/cleaning, slide construction, diagrams, charts, tables, layout checks, thread splitting) and the evidence helpers |
+| `addin/test/ui-specialists.test.tsx` | specialist picker, routing preview, editable examples, clarification, completion checklist |
 
 The in-memory hosts (`core/src/testing/fakes.ts`) implement the same driver interfaces as the Office.js drivers, and `fake-ollama.ts` speaks the Ollama HTTP API (including NDJSON streaming).
 
@@ -55,6 +60,13 @@ Run on every row of the [compatibility matrix](compatibility.md) before a releas
 **Privacy**
 1. With a network monitor (Little Snitch, Windows Resource Monitor, or `tcpdump -i any not host 127.0.0.1`) run a Word task → no connections other than localhost (and the one-time Office.js CDN load).
 2. Stop Ollama, run a task → clear failure, no other endpoint contacted.
+
+**Specialists** (run each in its host; record results in compatibility.md)
+1. Word — Writer: "Turn this rough draft into an executive-ready strategy document" → outline approval, then sections; headings styled; checks all ✓. Editor: edit a selected paragraph → only it changes. Reviewer: findings cite ¶ numbers; nothing changes. Summarizer on a 300-paragraph document → says it read part.
+2. Excel — Analyst: totals match Excel's own SUM; numbers cite ranges. Formula Expert: formula visible in the cell; error values reported. Cleaner: new "(clean)" sheet, source untouched, row counts in the report. Dashboard Builder: plan, new sheet, formulas referencing the data, a chart.
+3. PowerPoint — Author: "Create a 6-slide deck about …" → plan, six slides from layouts, a diagram/chart where planned, final layout check; notes limitation reported. Inspect the slides visually and note any layout problems the object-level check missed. Designer: fix an overflowing slide; other shapes untouched. Reviewer: plant a slide with no title and a long paragraph → reported as high priority.
+4. Outlook — Thread Analyst on a real quoted thread (Outlook and Gmail reply headers) → authors attributed correctly. Reply Writer → draft window, nothing sent. Action Extractor → explicit vs inferred items.
+5. Routing — the routing hint matches the intended specialist for your own phrasing; an ambiguous request asks; switching specialists mid-conversation keeps context.
 
 **Cancellation and limits**
 1. Start a multi-step Excel task; press **Stop** during approval → no further actions start; summary lists what was already applied.

@@ -146,3 +146,27 @@ h3 { font-size: 13px; margin: 0 0 8px; }
 .policy select { width: auto; max-width: 55%; }
 .privacy { margin: 0; padding-left: 18px; }
 .diag { background: var(--bg-2); padding: 8px; border-radius: 4px; }
+
+/* Specialists */
+.picker { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.picker-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.picker select { width: auto; flex: 1; min-width: 0; padding: 3px 6px; }
+.about { position: relative; }
+.about > summary { cursor: pointer; color: var(--accent); list-style: none; }
+.about[open] .spec-card { position: absolute; right: 0; bottom: 24px; width: min(320px, 90vw); z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,.18); }
+.spec-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; display: flex; flex-direction: column; gap: 6px; background: var(--bg); }
+.spec-card p { margin: 0; }
+.spec-name { font-weight: 600; }
+.spec-abilities { margin: 0; padding-left: 18px; }
+.spec-grid { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.spec-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; width: 100%; }
+.route { margin-top: -2px; }
+.handled { border-left: 3px solid var(--accent); padding: 2px 8px; }
+.clarify { border: 1px dashed var(--accent); border-radius: var(--radius); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.clarify p { margin: 0; }
+.plan { border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 8px; background: var(--bg-2); }
+.plan ol { margin: 4px 0; padding-left: 20px; }
+.checks { list-style: none; margin: 2px 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.checks .ok span:first-child { color: var(--ok); }
+.checks .bad { color: var(--err); }
+.checks .soft { color: var(--muted); }

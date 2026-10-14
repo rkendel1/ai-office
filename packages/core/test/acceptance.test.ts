@@ -182,7 +182,7 @@ describe("Excel: inspect, summarize, new sheet + chart, verify", () => {
     expect(JSON.stringify(model.requests[1]!.messages)).toContain("North");
   });
 
-  it("verifies computed values (fake engine has no cross-sheet SUM → reports #NAME?)", async () => {
+  it("verifies computed values and shows them with their formulas", async () => {
     const xl = new FakeExcelDriver({ S: [[1], [2], [3]] });
     const model = new ScriptedProvider([
       { call: { name: "workbook.write_range", arguments: { sheet: "S", address: "A4", formulas: [["=SUM(A1:A3)"]] } } },

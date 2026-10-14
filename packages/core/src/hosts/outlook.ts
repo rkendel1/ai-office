@@ -1,9 +1,10 @@
 import type { Freshness } from "../context.js";
 import { ScopeError, type CapabilityDefinition } from "../registry.js";
-import type { ContextItem, ItemIdentity } from "../types.js";
-import { normalizeText } from "../util.js";
-import { allSupported, type ApiSupportEntry, type HostAdapter, type RequirementChecker } from "./adapter.js";
+import type { ContextItem, ItemIdentity, Json } from "../types.js";
+import { fingerprint, normalizeText } from "../util.js";
+import { allSupported, type ApiSupportEntry, type HostAdapter, type RequirementChecker, type StateSnapshot } from "./adapter.js";
 import { excerpt, makeItem } from "./common.js";
+import { renderThread, splitThread } from "./outlook-thread.js";
 
 export interface MailItem {
   itemId?: string;
@@ -93,6 +94,11 @@ export class OutlookAdapter implements HostAdapter {
     ];
   }
 
+  async snapshot(): Promise<StateSnapshot> {
+    const units: Record<string, string> = { body: fingerprint(await (this.d.mode() === "compose" ? this.d.composeBody() : this.d.item().then((m) => m.body))) };
+    return { kind: "map", units };
+  }
+
   async checkFreshness(item: ContextItem): Promise<Freshness> {
     if (item.id !== "outlook:message") return "unknown";
     return (await this.messageItem()).fingerprint === item.fingerprint ? "fresh" : "stale";
@@ -164,7 +170,34 @@ export class OutlookAdapter implements HostAdapter {
       },
     };
 
-    return [read, { ...read, name: "context.read" }, draft];
+    const split: CapabilityDefinition<any> = {
+      name: "outlook.split_thread",
+      description:
+        "Split the open email and its quoted reply chain into separate messages with ids (M1 = the open message, M2 = the one it quotes, ...), author and date, so statements can be attributed. Text that cannot be attributed stays with the previous message.",
+      hosts: ["outlook"],
+      risk: "read_active",
+      modifies: false,
+      inputSchema: { type: "object", properties: {} },
+      async execute() {
+        const m = await d.item();
+        const msgs = splitThread(m, d.mode() === "compose" ? "You (draft)" : undefined);
+        const item = makeItem({
+          host: "outlook",
+          id: "outlook:thread",
+          label: `Thread “${m.subject || "(no subject)"}” (${msgs.length} message${msgs.length === 1 ? "" : "s"})`,
+          scope: "full",
+          content: `Subject: ${m.subject}\nParticipants: ${[...new Set(msgs.map((x) => x.author))].join(", ")}\n\n${renderThread(msgs)}`,
+          unsupported: m.attachments.length ? [{ kind: "attachments", count: m.attachments.length }] : [],
+          source: "outlook.split_thread",
+        });
+        return {
+          output: { messages: msgs.map((x) => ({ id: x.id, author: x.author, sent: x.sent ?? null, chars: x.text.length })) as unknown as Json },
+          context: [item],
+        };
+      },
+    };
+
+    return [read, { ...read, name: "context.read" }, split, draft];
   }
 }
 

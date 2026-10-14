@@ -22,6 +22,9 @@ export interface TaskRecord {
   outcome: TaskOutcome;
   finalText: string;
   errors: string[];
+  /** Specialist that handled the task, if any. */
+  specialist?: string;
+  completion?: { id: string; description: string; met: boolean; detail?: string }[];
   startedAt: number;
   finishedAt: number;
 }

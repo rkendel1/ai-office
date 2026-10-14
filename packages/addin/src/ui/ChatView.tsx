@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
-import type { AssistantSettings, TaskReport } from "@loai/core";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AssistantSettings, Specialist, TaskReport } from "@loai/core";
 import type { Connection } from "./App";
 import { ActionLine, ApprovalCard } from "./components";
+import { AUTO, ClarifyCard, CompletionList, GENERAL, PlanCard, RouteHint, SpecialistCard, SpecialistPicker } from "./Specialists";
 import type { useAssistant } from "./useAssistant";
 
 const STATE_TEXT: Record<string, string> = {
@@ -11,25 +12,38 @@ const STATE_TEXT: Record<string, string> = {
   executing: "Applying…",
 };
 
-const SUGGESTIONS: Record<string, string[]> = {
-  word: ["Summarize this document", "Improve the clarity of the selected text", "List the action items"],
-  excel: ["Describe the data on this sheet", "Add a summary sheet with totals and a chart", "Explain the formulas in my selection"],
-  powerpoint: ["Summarize the argument of this deck", "Tighten the text on the selected slide", "Add a closing slide"],
-  outlook: ["Summarize this email", "Extract the tasks and dates", "Draft a polite reply"],
-};
-
 export function ChatView({ a, busy, settings, conn, onOpenSettings }: { a: ReturnType<typeof useAssistant>; busy: boolean; settings: AssistantSettings; conn: Connection; onOpenSettings: () => void }) {
   const [text, setText] = useState("");
+  const [choice, setChoice] = useState(AUTO);
+  const [clarify, setClarify] = useState<{ request: string; question: string; options: Specialist[] } | null>(null);
+  const [routeError, setRouteError] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
-  useEffect(() => end.current?.scrollIntoView({ block: "end" }), [a.items.length, a.pending, a.items[a.items.length - 1]]);
+  const picker = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => end.current?.scrollIntoView({ block: "end" }), [a.items.length, a.pending, a.items[a.items.length - 1], clarify]);
 
+  const host = a.session.adapter.host;
+  const specialists = useMemo(() => a.session.specialists.forHost(host), [a.session, host]);
+  const selected = choice !== AUTO && choice !== GENERAL ? a.session.specialists.get(choice) : undefined;
+  const preview = useMemo(() => (choice === AUTO && text.trim().length >= 6 ? a.session.router.route(text, host, AUTO) : null), [a.session, text, host, choice]);
+
+  const fill = (t: string) => {
+    setText(t);
+    input.current?.focus();
+  };
   const send = (t = text) => {
     const v = t.trim();
     if (!v || busy) return;
+    setRouteError(null);
+    const route = a.session.router.route(v, host, choice);
+    if (route.kind === "rejected") return setRouteError(route.reason);
     setText("");
-    a.run(v);
+    if (route.kind === "clarify") return setClarify({ request: v, question: route.question, options: route.options });
+    setClarify(null);
+    if (route.kind === "specialist") a.run(v, route.specialist, route.how === "matched" ? route.reason : "You selected this specialist.");
+    else a.run(v);
   };
-  const lastReport = [...a.items].reverse().find((i) => i.kind === "report") as { report: TaskReport; request: string } | undefined;
+  const lastReport = [...a.items].reverse().find((i) => i.kind === "report") as { report: TaskReport; request: string; specialist?: Specialist } | undefined;
   const notReady = !settings.model || conn.state === "error" || conn.state === "unpaired";
 
   return (
@@ -45,11 +59,15 @@ export function ChatView({ a, busy, settings, conn, onOpenSettings }: { a: Retur
               <button className="primary" onClick={onOpenSettings}>
                 {!settings.model ? "Choose a model" : conn.state === "unpaired" ? "Pair with the companion" : "Fix connection"}
               </button>
+            ) : selected ? (
+              <SpecialistCard specialist={selected} onExample={fill} />
             ) : (
-              <div className="suggestions">
-                {(SUGGESTIONS[a.session.adapter.host] ?? []).map((s) => (
-                  <button key={s} className="chip" onClick={() => send(s)}>
-                    {s}
+              <div className="spec-grid">
+                <p className="small">Describe what you want, or start from one of these (you can edit before sending):</p>
+                {specialists.map((s) => (
+                  <button key={s.id} className="spec-tile" onClick={() => fill(s.examples[0]!)}>
+                    <b>{s.name}</b>
+                    <span className="small muted">{s.examples[0]}</span>
                   </button>
                 ))}
               </div>
@@ -83,11 +101,37 @@ export function ChatView({ a, busy, settings, conn, onOpenSettings }: { a: Retur
                   {it.text}
                 </div>
               );
+            case "specialist":
+              return (
+                <div key={it.id} className="handled small">
+                  <b>{it.specialist.name}</b> <span className="muted">· {it.specialist.description}</span>
+                  {it.reason && <div className="muted">{it.reason}</div>}
+                </div>
+              );
+            case "plan":
+              return <PlanCard key={it.id} plan={it.plan} />;
             case "report":
-              return <ReportCard key={it.id} report={it.report} onRetry={it === lastReport && it.report.outcome !== "completed" ? () => a.run(it.request) : undefined} />;
+              return (
+                <ReportCard
+                  key={it.id}
+                  report={it.report}
+                  onRetry={it === lastReport && it.report.outcome !== "completed" && !it.report.awaitingInput ? () => a.run(it.request, it.specialist) : undefined}
+                />
+              );
           }
         })}
         {a.pending && <ApprovalCard pending={a.pending} />}
+        {clarify && (
+          <ClarifyCard
+            question={clarify.question}
+            options={clarify.options}
+            onChoose={(sp) => {
+              const req = clarify.request;
+              setClarify(null);
+              a.run(req, sp ?? undefined, sp ? "You chose this specialist." : undefined);
+            }}
+          />
+        )}
         <div ref={end} />
       </div>
       <div className="composer">
@@ -100,7 +144,17 @@ export function ChatView({ a, busy, settings, conn, onOpenSettings }: { a: Retur
             <button onClick={a.cancel}>Stop</button>
           </div>
         )}
+        <div className="row between" ref={picker}>
+          <SpecialistPicker list={specialists} value={choice} onChange={setChoice} disabled={busy} />
+          {selected && (
+            <details className="about small">
+              <summary>About</summary>
+              <SpecialistCard specialist={selected} onExample={fill} />
+            </details>
+          )}
+        </div>
         <textarea
+          ref={input}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
@@ -109,11 +163,13 @@ export function ChatView({ a, busy, settings, conn, onOpenSettings }: { a: Retur
               send();
             }
           }}
-          placeholder={busy ? "Working…" : "Ask about this item or describe a change"}
+          placeholder={busy ? "Working…" : selected ? `Ask the ${selected.name}…` : "Ask about this item or describe a change"}
           rows={3}
           disabled={busy}
           aria-label="Message"
         />
+        <RouteHint route={preview} onPick={() => picker.current?.querySelector("select")?.focus()} />
+        {routeError && <div className="small err">{routeError}</div>}
         <div className="row between">
           <button className="link small" onClick={a.newConversation} disabled={busy}>
             New conversation
@@ -132,9 +188,12 @@ const OUTCOME: Record<string, string> = { completed: "Done", partial: "Partly do
 function ReportCard({ report, onRetry }: { report: TaskReport; onRetry?: () => void }) {
   const used = report.contextUsed.filter((c) => c.scope !== "metadata");
   return (
-    <div className={`report report-${report.outcome}`}>
+    <div className={`report report-${report.awaitingInput ? "partial" : report.outcome}`}>
       <div className="row between">
-        <strong>{OUTCOME[report.outcome]}</strong>
+        <strong>
+          {report.awaitingInput ? "Needs your answer" : OUTCOME[report.outcome]}
+          {report.specialist && <span className="muted"> · {report.specialist.name}</span>}
+        </strong>
         {onRetry && (
           <button className="small-btn" onClick={onRetry}>
             Retry task
@@ -142,6 +201,17 @@ function ReportCard({ report, onRetry }: { report: TaskReport; onRetry?: () => v
         )}
       </div>
       <div className="small">{report.executionSummary}</div>
+      <CompletionList report={report} />
+      {report.limitations.length > 0 && (
+        <details className="small">
+          <summary>Limitations ({report.limitations.length})</summary>
+          <ul>
+            {report.limitations.map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+        </details>
+      )}
       {report.errors.length > 0 && report.outcome !== "completed" && <div className="small err">{report.errors[report.errors.length - 1]}</div>}
       <div className="small muted">
         Context used: {used.length ? used.map((c) => `${c.label}${c.truncated ? " (partial)" : ""}`).join("; ") : "overview only"}
