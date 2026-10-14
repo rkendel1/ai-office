@@ -282,6 +282,7 @@ describe("PowerPoint Presentation Author", () => {
     call("presentation.create_slide", { title: "Our approach", layout: "Title Only" }),
     call("presentation.add_diagram", { slideId: "slide1002", kind: "process", items: [{ title: "Collect" }, { title: "Analyse" }, { title: "Report" }] }),
     call("presentation.check_layout", {}),
+    call("presentation.check_rendering", {}),
   ];
 
   it("creates multiple distinct, verified slides after an approved plan", async () => {
@@ -374,6 +375,7 @@ describe("PowerPoint Deck Reviewer", () => {
   it("identifies a deliberately introduced problem", async () => {
     const model = new ScriptedProvider([
       call("presentation.check_layout", {}),
+      call("presentation.check_rendering", {}),
       { text: "High priority:\n- Slide 2 has no title and its body text overflows; the claim that share will triple has no evidence.\nLow priority:\n- Slide 1 needs supporting data. Layout findings come from slide objects; the rendered slides were not inspected." },
     ]);
     const s = setup(new PowerPointAdapter(deck()), model);

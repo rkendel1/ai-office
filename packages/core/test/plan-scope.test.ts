@@ -47,6 +47,7 @@ describe("bounded batch execution of an approved plan", () => {
       onLastSlide("presentation.add_bar_chart", { categories: ["Q1", "Q2"], values: [10, 20] }),
       call("presentation.create_slide", { title: "Next steps", bullets: ["Hire", "Launch"] }),
       call("presentation.check_layout", {}),
+      call("presentation.check_rendering", {}),
       { text: "Created 3 slides with a chart. No serious layout issues found." },
     ]);
     const s = setup(new PowerPointAdapter(ppt), model, { approve: batch });
@@ -54,7 +55,7 @@ describe("bounded batch execution of an approved plan", () => {
 
     expect(s.approver.requests.map((q) => q.capability)).toEqual(["plan.propose"]);
     expect(s.approver.requests[0]!.planBatch).toEqual({ operations: 4, autoEligible: 4, alwaysAsk: 0 });
-    const writes = r.actions.filter((a) => a.capability.startsWith("presentation.") && a.capability !== "presentation.check_layout" && a.capability !== "presentation.read_slides");
+    const writes = r.actions.filter((a) => a.capability.startsWith("presentation.") && !["presentation.check_layout", "presentation.check_rendering", "presentation.read_slides"].includes(a.capability));
     expect(writes.map((a) => [a.status, a.approval])).toEqual(Array(4).fill(["succeeded", "plan"]));
     expect(writes.every((a) => a.verification?.verified === true)).toBe(true);
     expect(ppt.slidesList).toHaveLength(3);

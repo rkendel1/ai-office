@@ -8,13 +8,32 @@ interface Issue {
   detail: string;
 }
 
-export function lastLayoutCheck(actions: ExecutionRecord[]): { index: number; issues: Issue[] } | undefined {
+export function lastLayoutCheck(actions: ExecutionRecord[], capability = "presentation.check_layout"): { index: number; issues: Issue[]; output: Record<string, any> } | undefined {
   for (let i = actions.length - 1; i >= 0; i--) {
     const a = actions[i]!;
-    if (a.capability === "presentation.check_layout" && a.status === "succeeded") return { index: i, issues: ((a.output as any)?.issues ?? []) as Issue[] };
+    if (a.capability === capability && a.status === "succeeded") return { index: i, issues: ((a.output as any)?.issues ?? []) as Issue[], output: (a.output ?? {}) as Record<string, any> };
   }
   return undefined;
 }
+
+/** True if a rendering check actually rendered slides (visual evidence exists). */
+export function renderedEvidence(actions: ExecutionRecord[]): boolean {
+  return actions.some((a) => a.capability === "presentation.check_rendering" && a.status === "succeeded" && (a.output as any)?.renderingVerified === true);
+}
+
+/** The rendered output was checked where supported; where not, the answer says so. */
+export const renderingAccounted: CompletionCriterion = {
+  id: "rendering-accounted",
+  description: "Rendered slides were checked where supported, or the answer says they were not visually checked",
+  required: true,
+  evaluate(e) {
+    const r = lastLayoutCheck(e.actions, "presentation.check_rendering");
+    if (!r) return { met: false, detail: "no rendering check was attempted" };
+    if (r.output.supported) return { met: true, detail: r.output.method ?? "rendered" };
+    const said = /\b(not (been )?visually (checked|verified|inspected)|could not (be )?(render|visually)|rendering (is |was )?(not available|unsupported|not supported)|without (a )?visual check|not rendered)\b/i.test(e.text);
+    return { met: said, detail: said ? "rendering unsupported, disclosed" : "rendering is unsupported here, but the answer does not say the slides were not visually checked" };
+  },
+};
 
 /** The layout was checked after the last change. */
 export function layoutCheckedAfterChanges(): CompletionCriterion {
@@ -42,7 +61,8 @@ export const reportsLayoutIssues: CompletionCriterion = {
   evaluate(e) {
     const check = lastLayoutCheck(e.actions);
     if (!check) return { met: false, detail: "no layout check" };
-    const high = check.issues.filter((i) => i.severity === "high");
+    const rendered = lastLayoutCheck(e.actions, "presentation.check_rendering");
+    const high = [...check.issues, ...(rendered?.issues ?? [])].filter((i) => i.severity === "high");
     const missing = high.filter((i) => i.slide > 0 && !new RegExp(`\\bslides?\\s*(\\d+\\s*(,|and|&)\\s*)*${i.slide}\\b`, "i").test(e.text));
     return { met: missing.length === 0, detail: high.length ? (missing.length ? `not reported: ${missing.map((i) => `slide ${i.slide} (${i.kind})`).join(", ")}` : `${high.length} serious issue(s) reported`) : "no serious issues" };
   },
@@ -51,11 +71,13 @@ export const reportsLayoutIssues: CompletionCriterion = {
 /** Must not claim the rendered slides were checked: only objects are inspected. */
 export const noRenderingClaims: CompletionCriterion = {
   id: "no-rendering-claims",
-  description: "Does not claim the rendered slides were visually verified",
+  description: "Claims about how slides look are backed by a rendering check",
   required: true,
   evaluate(e) {
-    const claim = /(?<!not |n't |never )\b(visually (verified|confirmed|checked)|rendering (was|has been|is) (verified|confirmed|checked)|i (looked at|viewed|saw) the (rendered )?slides?)\b/i.exec(e.text);
-    return { met: !claim, detail: claim ? `claims “${claim[0]}”` : "no rendering claims" };
+    const claim = /(?<!not |n't |never |been not )\b(visually (verified|confirmed|checked)|rendering (was|has been|is) (verified|confirmed|checked)|i (looked at|viewed|saw) the (rendered )?slides?)\b/i.exec(e.text);
+    if (!claim) return { met: true, detail: "no rendering claims" };
+    if (renderedEvidence(e.actions)) return { met: true, detail: "visual claim backed by a rendering check" };
+    return { met: false, detail: `claims “${claim[0]}” without a rendering check` };
   },
 };
 
