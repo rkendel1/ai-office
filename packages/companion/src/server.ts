@@ -9,7 +9,7 @@ import { Pairing, authenticate, loadAdminToken, type Principal } from "./auth.js
 import type { CompanionConfig } from "./config.js";
 import { CompanionStore } from "./store.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 /** Ollama endpoints the companion forwards. Everything else is refused. */
 const OLLAMA_ROUTES: Record<string, "GET" | "POST"> = {

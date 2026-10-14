@@ -8,7 +8,7 @@ Status legend: **Auto** = covered by automated tests against in-memory hosts · 
 |---|---|---|---|---|
 | Word | Manual | Manual | Not a launch target¹ | WordApi 1.1 (all); 1.3 for positioned insert, list/table detection, multi-paragraph replace |
 | Excel | Manual | Manual | Not a launch target¹ | ExcelApi 1.1; 1.2 filters; 1.4 null-safe used range |
-| PowerPoint | Manual | Manual | Not a launch target¹ | PowerPointApi 1.3 add slide; 1.4 read/edit text, text boxes; 1.5 selected slides |
+| PowerPoint | Manual | Manual | Not a launch target¹ | PowerPointApi 1.3 slides from layouts; 1.4 text boxes, shapes, geometry, fonts, fills; 1.5 selected slides; 1.8 tables |
 | Outlook | Manual | Manual (new and classic) | Not a launch target¹ | Mailbox 1.1 read + reply form; 1.2 insert into compose body |
 
 ¹ The architecture permits it, but a web-hosted pane generally cannot reach `localhost` without extra configuration (spec §4).
@@ -24,7 +24,14 @@ The add-in checks requirement sets at runtime (`Office.context.requirements.isSe
 | `workbook.filter_table` | ExcelApi 1.2 | not offered |
 | `presentation.add_slide` | PowerPointApi 1.3 | not offered |
 | selected slides in context | PowerPointApi 1.5 | reported as "not reported by this PowerPoint version" |
-| speaker notes | — | not offered (no Office.js API) |
+| `presentation.list_layouts`, `create_slide` | PowerPointApi 1.3 | not offered |
+| `presentation.add_text_box`, `add_shape`, `add_diagram`, `add_bar_chart`, `format_text`, `set_geometry` | PowerPointApi 1.4 | not offered |
+| `presentation.add_table` | PowerPointApi 1.8 | not offered |
+| speaker notes (`presentation.set_notes`) | — | not offered (no Office.js API); slides are created without notes and the action is marked *partial* |
+| slide size | — | not reported by Office.js; 960×540 (16:9) assumed and stated in layout checks |
+| `workbook.compute_stats`, `profile_data`, `clean_to_sheet` | ExcelApi 1.1 (+1.4 for empty used ranges) | — |
+| `document.write_blocks` | WordApi 1.1 (1.3 for positioned inserts) | — |
+| `outlook.split_thread` | Mailbox 1.1 | — |
 | sending email | — | intentionally not offered |
 
 ## Runtime
@@ -46,5 +53,16 @@ Any Ollama chat model works. Guidance:
 | Reasoning models (DeepSeek-R1 distills, QwQ) | Varies | Higher latency; set a larger timeout |
 
 Set **Context size (num_ctx)** to what your RAM/VRAM allows; the runtime uses the smaller of that and the model's maximum, shrinks Office content to fit, and fails clearly when even the minimum does not fit.
+
+## Specialists
+
+All 14 specialists are covered by automated workflow tests against the in-memory hosts. **None has yet been exercised in live Office.** Until each is run through the checklist in [testing.md](testing.md) on a host, treat its live behaviour as unverified.
+
+| Specialist | Word Win | Word Mac | Excel Win | Excel Mac | PPT Win | PPT Mac | Outlook Win | Outlook Mac |
+|---|---|---|---|---|---|---|---|---|
+| Word specialists (4) | Manual | Manual | | | | | | |
+| Excel specialists (4) | | | Manual | Manual | | | | |
+| PowerPoint specialists (3) | | | | | Manual | Manual | | |
+| Outlook specialists (3) | | | | | | | Manual | Manual |
 
 Record live results for each row (host × OS × Office build × model) in this file as they are verified.

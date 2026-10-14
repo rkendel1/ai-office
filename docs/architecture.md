@@ -14,6 +14,7 @@ Three deployable pieces: the **add-in** (task pane), the **companion** (local se
 | F. Inference adapter | `core/src/inference/ollama.ts` | Model discovery, `/api/show` capabilities and context length, streaming chat, native tool calls; `toolcalls.ts` provides a text protocol for models without tool support |
 | G. Local companion | `packages/companion` | Loopback HTTPS; pairing-based auth; Ollama allowlist proxy; serves the built add-in |
 | H. Local storage | `companion/src/store.ts` | Built-in `node:sqlite`: history (references, not document copies), settings, hashed client tokens |
+| Specialist layer | `core/src/specialists` | Task-specific configurations of the runtime: instructions, capability allowlists, required context, guards, completion criteria; deterministic router. See [specialists.md](specialists.md). |
 
 ## Request flow (spec §7.2)
 
@@ -27,12 +28,22 @@ Three deployable pieces: the **add-in** (task pane), the **companion** (local se
 8. The result (status, verification, errors; read content goes into the fenced context package) returns to the model; the loop continues within limits.
 9. The runtime produces a `TaskReport` whose **execution summary is generated from records, not from the model's words**. The UI shows both; the summary is authoritative.
 
+## Specialists
+
+A request can be handled by a specialist chosen by the user or by the deterministic router (see [specialists.md](specialists.md)). The same `AgentRuntime.run` executes it with:
+
+- **tools** = the specialist's allowlist ∩ capabilities registered for the host (enforced again by the registry at dispatch);
+- **policy** = the user's policy, made stricter where the specialist asks (never looser);
+- **required context** acquired through the registry before the first model call;
+- **guards** that may reject individual calls (plan required, writes only to new sheets, only new slides, quote text before editing);
+- **completion criteria** evaluated after the task against execution records, inspected context and before/after host snapshots. An unmet required criterion turns a "completed" task into "partial", and is listed in the report.
+
 ## Outcome classification
 
 | Outcome | When |
 |---|---|
-| `completed` | No limits hit; every attempted change verified |
-| `partial` | A limit was hit, or some changes succeeded while others failed or could not be verified |
+| `completed` | No limits hit; every attempted change verified; all required specialist criteria met |
+| `partial` | A limit was hit; some changes failed or could not be verified; or a required specialist criterion is unmet |
 | `failed` | Model/inference error before any successful change, or all attempted changes failed |
 | `cancelled` | User stopped the task. No new actions start; changes already committed by Office remain and are listed |
 
@@ -55,4 +66,6 @@ The add-in can also talk to Ollama directly (`transport: direct`) if `OLLAMA_ORI
 - One capability per model turn, so each action is inspected before the next is chosen.
 - No "send email" capability. The user sends drafts from Outlook.
 - No reading of other documents or unrelated mail (`read_external` exists in the policy for future capabilities and requires confirmation).
-- Speaker notes are not offered: Office.js does not expose them.
+- Speaker notes are not offered in live PowerPoint: Office.js does not expose them. The capability exists for hosts that do; the Presentation Author reports notes it could not add.
+- PowerPoint charts are drawn with editable shapes, because Office.js cannot create native PowerPoint charts.
+- Layout checks inspect slide objects (geometry, text, formatting), never the rendered slide.

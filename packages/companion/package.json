@@ -1,6 +1,6 @@
 {
   "name": "@loai/companion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Local companion service for Local Office AI: authenticated loopback API, Ollama proxy, local history.",
@@ -15,6 +15,6 @@
     "dev": "tsc -p tsconfig.json && node --no-warnings dist/cli.js start --dev"
   },
   "dependencies": {
-    "@loai/core": "0.1.0"
+    "@loai/core": "0.2.0"
   }
 }
