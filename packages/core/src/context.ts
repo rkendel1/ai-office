@@ -44,6 +44,15 @@ export class ContextManager {
     this.emit();
   }
 
+  remove(pred: (item: ContextItem) => boolean): void {
+    let changed = false;
+    for (const [id, it] of this.items) if (pred(it)) {
+      this.items.delete(id);
+      changed = true;
+    }
+    if (changed) this.emit();
+  }
+
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
@@ -61,7 +70,7 @@ export class ContextManager {
   buildPackage(host: HostKind, identity: ItemIdentity, budgetChars: number, onlyIds?: string[]): ContextPackage {
     const all = this.inspected().filter((i) => i.host === host && (!onlyIds || onlyIds.includes(i.id)));
     const rank = (i: (typeof all)[number]) =>
-      (i.scope === "selection" ? 0 : i.scope === "metadata" ? 1 : 2) + (i.freshness === "stale" ? 10 : 0);
+      (i.scope === "selection" ? 0 : i.scope === "source" ? 1 : i.scope === "metadata" ? 2 : 3) + (i.freshness === "stale" ? 10 : 0);
     const ordered = [...all].sort((a, b) => rank(a) - rank(b) || b.retrievedAt - a.retrievedAt);
 
     const included: ContextItem[] = [];
@@ -118,8 +127,12 @@ export function renderContextPackage(pkg: ContextPackage, staleIds: string[] = [
       ? ` unsupported="${it.unsupported.map((u) => `${u.count} ${u.kind}`).join(", ")}"`
       : "";
     const stale = staleIds.includes(it.id) ? ` stale="true"` : "";
+    const p = it.provenance;
+    const prov = p
+      ? ` from_app="${p.app}"${p.document ? ` from_document="${attr(p.document)}"` : ""} from_scope="${attr(p.scope)}" retrieved="${new Date(p.retrievedAt).toISOString()}"`
+      : "";
     lines.push(
-      `${OPEN} id="${attr(it.id)}" label="${attr(it.label)}" scope="${it.scope}" truncated="${it.truncated}"${unsupported}${stale}>>>`,
+      `${OPEN} id="${attr(it.id)}" label="${attr(it.label)}" scope="${it.scope}" truncated="${it.truncated}"${unsupported}${stale}${prov}>>>`,
       escapeUntrusted(it.content),
       CLOSE,
     );

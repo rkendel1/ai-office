@@ -8,6 +8,7 @@ import { isLoopbackUrl, minimizeRecord, normalizeSettings, type TaskRecord } fro
 import { Pairing, authenticate, loadAdminToken, type Principal } from "./auth.js";
 import type { CompanionConfig } from "./config.js";
 import { CompanionStore } from "./store.js";
+import { SourceStore } from "./sources.js";
 
 export const VERSION = "0.2.0";
 
@@ -46,11 +47,12 @@ export interface Companion {
   url: string;
   pairing: Pairing;
   store: CompanionStore;
+  sources: SourceStore;
   adminToken: string;
   close(): Promise<void>;
 }
 
-export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: string) => void; fetchImpl?: typeof fetch } = {}): Promise<Companion> {
+export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: string) => void; fetchImpl?: typeof fetch; now?: () => number } = {}): Promise<Companion> {
   const log = opts.log ?? ((m: string) => console.log(m));
   const fetchImpl = opts.fetchImpl ?? fetch;
   if (!cfg.allowRemoteOllama && !isLoopbackUrl(cfg.ollamaUrl))
@@ -59,6 +61,7 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
   const store = new CompanionStore(cfg.dbPath);
   const adminToken = loadAdminToken(cfg.home);
   const pairing = new Pairing(store);
+  const sources = new SourceStore(opts.now);
   const ollamaBase = cfg.ollamaUrl.replace(/\/+$/, "");
   const tls = cfg.tlsCertPath && cfg.tlsKeyPath && fs.existsSync(cfg.tlsCertPath) && fs.existsSync(cfg.tlsKeyPath);
 
@@ -206,6 +209,20 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
       await store.clear();
       return json(res, 200, { cleared: true });
     }
+    // Cross-app sources: shared on an explicit user action, memory only, expiring.
+    if (route === "POST /v1/sources") {
+      const r = sources.add(await readJson(req));
+      return r.error ? json(res, 400, { error: r.error }) : json(res, 201, r.source);
+    }
+    if (route === "GET /v1/sources") return json(res, 200, { sources: sources.list() });
+    if (route === "DELETE /v1/sources") return json(res, 200, { deleted: sources.clear() });
+    const sm = /^(GET|DELETE) \/v1\/sources\/([0-9a-f-]{36})$/.exec(route);
+    if (sm) {
+      if (sm[1] === "DELETE") return json(res, 200, { deleted: sources.delete(sm[2]!) ? 1 : 0 });
+      const s = sources.get(sm[2]!);
+      return s ? json(res, 200, s) : json(res, 404, { error: "This shared content has expired or was removed." });
+    }
+
     const hm = /^GET \/v1\/history\/([\w-]{1,80})$/.exec(route);
     if (hm) {
       const r = await store.get(hm[1]!);
@@ -311,6 +328,7 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
     url,
     pairing,
     store,
+    sources,
     adminToken,
     close: () =>
       new Promise<void>((resolve) => {

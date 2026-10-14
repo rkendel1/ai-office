@@ -35,12 +35,12 @@ export interface TextNumber {
  */
 export function numbersInText(text: string): TextNumber[] {
   const out: TextNumber[] = [];
-  const re = /(?<![A-Za-z0-9_.!$:])(\$?)(-?\d[\d,]*(?:\.\d+)?)(\s?%|\s?[KMB]\b|\s?(?:thousand|million|billion)\b)?/g;
+  const re = /(?<![A-Za-z0-9_.!$:,])(\$?)(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(\s?%|\s?[KMB]\b|\s?(?:thousand|million|billion)\b)?/g;
   for (const m of text.matchAll(re)) {
     const idx = m.index ?? 0;
     const before = text.slice(Math.max(0, idx - 14), idx).toLowerCase();
     const after = text.slice(idx + m[0].length, idx + m[0].length + 2);
-    if (/(slide|paragraph|para|row|column|col|step|item|page|section|message|q|fy|h|m|#|¶)\s*$/.test(before)) continue;
+    if (/\b(slides?|paragraphs?|para|rows?|columns?|col|steps?|items?|pages?|sections?|messages?|version|v)\s*$/.test(before) || /[#¶]\s*$/.test(before)) continue;
     if (/^[A-Za-z]/.test(after) && !m[3]) continue; // 3rd, 2x, 10am
     if (/^[:/]\d/.test(after)) continue; // times and dates
     const lineStart = text.lastIndexOf("\n", idx) + 1;

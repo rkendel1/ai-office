@@ -19,6 +19,7 @@ export * from "./hosts/powerpoint.js";
 export * from "./hosts/outlook.js";
 export * from "./testing/fakes.js";
 export * from "./session.js";
+export * from "./sources.js";
 export * from "./specialists/index.js";
 export * from "./hosts/excel-analysis.js";
 export * from "./hosts/outlook-thread.js";

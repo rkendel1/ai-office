@@ -9,6 +9,7 @@ import { isApprovedPlan, planFrom, type Plan } from "./specialists/shared/planni
 import { PlanGrant, operationProblem, parseOperations, type PlanExecutionReport } from "./specialists/shared/plan-scope.js";
 import { decide } from "./permissions.js";
 import type { Specialist, TaskEvidence } from "./specialists/types.js";
+import { sourceContextItem, summarizeSource, type SharedSource, type SourceCapture, type SourceSummary } from "./sources.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { CapabilityRegistry } from "./registry.js";
 import type { AssistantSettings } from "./settings.js";
@@ -76,6 +77,8 @@ export interface TaskReport {
   limitations: string[];
   /** The assistant asked a question and made no changes: the task waits for the user's answer. */
   awaitingInput?: boolean;
+  /** Content shared from other Office apps that the user attached to this task. */
+  sources: SourceSummary[];
 }
 
 /** Apply a specialist's stricter policy on top of the user's. It can never loosen. */
@@ -130,7 +133,10 @@ export class AgentRuntime {
    * Run one user task through the bounded loop:
    * context → model → (validate/authorize/execute/verify)* → report.
    */
-  async run(request: string, opts: { signal?: AbortSignal; onEvent?: (e: RuntimeEvent) => void; specialist?: Specialist } = {}): Promise<TaskReport> {
+  async run(
+    request: string,
+    opts: { signal?: AbortSignal; onEvent?: (e: RuntimeEvent) => void; specialist?: Specialist; sources?: SharedSource[] } = {},
+  ): Promise<TaskReport> {
     if (this.running) throw new Error("A task is already running");
     this.running = true;
     const now = this.deps.now ?? Date.now;
@@ -184,6 +190,16 @@ export class AgentRuntime {
           context.setFreshness(it.id, "unknown");
         }
       }
+      // Attached sources are this task's only cross-app content. Earlier attachments not
+      // attached again are dropped, so nothing lingers from a previous authorisation.
+      const attached = (opts.sources ?? []).filter((s) => s.expiresAt > now());
+      if ((opts.sources ?? []).length > attached.length) limitations.push("An attached source had expired and was not used.");
+      context.remove((i) => i.scope === "source" && !attached.some((s) => i.id === `source:${s.id}`));
+      const sourceItems = attached.map((s) => sourceContextItem(s, adapter.host));
+      context.register(sourceItems);
+      for (const it of sourceItems) taskContext.set(it.id, it);
+      if (sourceItems.length) emit({ type: "context", items: sourceItems });
+
       const initial = await adapter.initialContext();
       context.register(initial);
       for (const it of initial) taskContext.set(it.id, it);
@@ -263,11 +279,12 @@ export class AgentRuntime {
 
         // Fit the request into the model's context window, shrinking Office content first.
         let messages = buildMessages();
-        let est = estimateTokens(messages.map((m) => m.content).join("\n")) + (nativeTools ? estimateTokens(JSON.stringify(tools)) : 0);
+        const toolTokens = nativeTools ? estimateTokens(JSON.stringify(tools)) : 0;
+        let est = estimateTokens(messages.map((m) => m.content).join("\n")) + toolTokens;
         while (est > capacityTokens * 0.85 && budget > 2000) {
           budget = Math.floor(budget / 2);
           messages = buildMessages();
-          est = estimateTokens(messages.map((m) => m.content).join("\n"));
+          est = estimateTokens(messages.map((m) => m.content).join("\n")) + toolTokens;
         }
         if (est > capacityTokens * 0.95) {
           throw new InferenceError(
@@ -479,11 +496,44 @@ export class AgentRuntime {
       plan,
       planExecution,
       limitations,
+      sources: (opts.sources ?? []).filter((s) => taskContext.has(`source:${s.id}`)).map(summarizeSource),
       awaitingInput,
     };
     setState(outcome === "completed" ? "completed" : outcome);
     await this.record(report, request, startedAt);
     return report;
+  }
+
+  /**
+   * Read the user's current selection so they can share it with another Office
+   * app. Uses the host's own read capability through the registry (normal
+   * policy applies); nothing is shared until the user confirms the preview.
+   */
+  async captureForSharing(signal?: AbortSignal): Promise<{ capture?: SourceCapture; reason?: string }> {
+    const { adapter, registry } = this.deps;
+    const name = adapter.host === "outlook" ? "outlook.split_thread" : "selection.read";
+    if (!registry.get(name)) return { reason: "This Office app cannot share a selection." };
+    const identity = await adapter.identity();
+    const out = await registry.dispatch(
+      { id: newId("share"), name, arguments: {} },
+      { ctx: { host: adapter.host, identity, signal }, policy: this.deps.settings().policy, origin: "user", approver: this.deps.approver },
+    );
+    const item = out.context[0];
+    if (out.record.status !== "succeeded" || !item) {
+      const note = (out.record.output as Record<string, unknown> | undefined)?.note;
+      return { reason: typeof note === "string" ? note : out.record.error ?? "Nothing is selected." };
+    }
+    return {
+      capture: {
+        app: adapter.host,
+        documentTitle: identity.title,
+        documentId: identity.id,
+        scopeLabel: item.label,
+        content: item.content,
+        truncated: item.truncated,
+        retrievedAt: item.retrievedAt,
+      },
+    };
   }
 
   /**

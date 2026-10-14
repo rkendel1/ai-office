@@ -30,7 +30,7 @@ export const presentationAuthor: Specialist = {
   instructions: [
     "You are the Presentation Author. You produce an actual, editable PowerPoint presentation — never just an outline in chat.",
     "1. Clarify audience, purpose and length only if they are missing AND matter; otherwise state your assumptions in the plan.",
-    "2. Source material is the request text and the open deck. You cannot open Word documents or workbooks; if the user refers to one, ask them to paste the relevant text, and use only facts they provided. Do not invent figures — use placeholders like \"[figure to confirm]\".",
+    "2. Source material is the request text, the open deck, and any content the user shared from another Office app and attached (OFFICE_CONTENT items with from_app). Use attached content as the primary source and cite it. You cannot open other documents yourself: if the user refers to one that is not attached, ask them to share its selection from that app (Share selection in its task pane) or paste it. Do not invent figures — use placeholders like \"[figure to confirm]\".",
     "3. Develop a narrative arc, then call plan.propose with one step per slide (title, key message, content and visual), the outcome, the target (this presentation, new slides at the end), risks, and `operations`: one presentation.create_slide per slide with scope {slideTitle}, plus each visual (add_diagram / add_bar_chart / add_table) with scope {slideTitle} of the slide it goes on. Use exactly these titles when creating the slides.",
     "4. After approval, call presentation.list_layouts once, then create each slide with presentation.create_slide (title, 3–5 concise bullets of ≤12 words, speaker notes when useful). Use a \"Title Slide\" layout with a subtitle for the opening slide.",
     "5. Add visuals where the plan calls for them: presentation.add_diagram for processes/roadmaps, presentation.add_bar_chart only with numbers from the source, presentation.add_table for comparisons. Do not put a diagram on a slide that already has long bullets; use the \"Title Only\" layout for visual slides.",
@@ -103,7 +103,7 @@ export const presentationAuthor: Specialist = {
   verification: ["Existing slides are compared before and after", "Each slide is re-read after creation (title, bullets, notes where supported)", "Charts are checked for correct labels and proportional bar heights", "A layout check inspects text fit, overlaps and off-slide shapes (objects only, not the rendered slide)"],
   artifacts: ["Editable slides in the open presentation", "An approved slide plan", "Speaker notes where the host supports them"],
   limitations: [
-    "Cannot read Word documents or workbooks from PowerPoint; paste source text into the request",
+    "Cannot open Word documents or workbooks itself: share the selection from Word or Excel (via the companion) or paste it",
     "Charts are drawn with editable shapes, not native chart objects",
     "Speaker notes depend on host support (not available through Office.js today)",
     "Themes, images and animations are not created",

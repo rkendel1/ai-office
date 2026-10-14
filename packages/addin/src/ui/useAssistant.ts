@@ -10,6 +10,7 @@ import {
   type InferenceProvider,
   type Plan,
   type RuntimeEvent,
+  type SharedSource,
   type Specialist,
   type TaskReport,
   type TaskState,
@@ -83,7 +84,7 @@ export function useAssistant(host: HostInfo, getProvider: () => InferenceProvide
   useEffect(() => session.context.subscribe(() => setContextVersion((v) => v + 1)), [session]);
 
   const run = useCallback(
-    async (text: string, specialist?: Specialist, reason?: string) => {
+    async (text: string, specialist?: Specialist, reason?: string, sources?: SharedSource[]) => {
       if (session.runtime.busy) return;
       const ac = new AbortController();
       abortRef.current = ac;
@@ -132,7 +133,7 @@ export function useAssistant(host: HostInfo, getProvider: () => InferenceProvide
         }
       };
       try {
-        const report = await session.runtime.run(text, { signal: ac.signal, onEvent, specialist });
+        const report = await session.runtime.run(text, { signal: ac.signal, onEvent, specialist, sources });
         const id = open;
         if (id) setItems((xs) => xs.map((x) => (x.id === id && x.kind === "assistant" ? { ...x, streaming: false } : x)));
         setItems((xs) => [...xs, { id: nid(), kind: "report", report, request: text, specialist }]);
@@ -159,10 +160,12 @@ export function useAssistant(host: HostInfo, getProvider: () => InferenceProvide
     [session],
   );
 
+  const captureForSharing = useCallback(() => session.runtime.captureForSharing(), [session]);
+
   const newConversation = useCallback(() => {
     session.runtime.resetConversation();
     setItems([]);
   }, [session]);
 
-  return { session, items, state, stateDetail, pending, actions, contextVersion, run, cancel, execute, newConversation };
+  return { session, items, state, stateDetail, pending, actions, contextVersion, run, cancel, execute, newConversation, captureForSharing };
 }

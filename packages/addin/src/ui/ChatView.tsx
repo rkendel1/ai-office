@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AssistantSettings, Specialist, TaskReport } from "@loai/core";
+import type { AssistantSettings, SharedSource, SourceSummary, Specialist, TaskReport } from "@loai/core";
+import type { CompanionClient } from "../services/companion";
+import { SourcesBar } from "./Sources";
 import type { Connection } from "./App";
 import { ActionLine, ApprovalCard } from "./components";
 import { AUTO, ClarifyCard, CompletionList, GENERAL, PlanCard, PlanProgress, RouteHint, SpecialistCard, SpecialistPicker } from "./Specialists";
@@ -12,10 +14,27 @@ const STATE_TEXT: Record<string, string> = {
   executing: "Applying…",
 };
 
-export function ChatView({ a, busy, settings, conn, onOpenSettings }: { a: ReturnType<typeof useAssistant>; busy: boolean; settings: AssistantSettings; conn: Connection; onOpenSettings: () => void }) {
+export function ChatView({
+  a,
+  busy,
+  settings,
+  conn,
+  onOpenSettings,
+  companion,
+  sharing,
+}: {
+  a: ReturnType<typeof useAssistant>;
+  busy: boolean;
+  settings: AssistantSettings;
+  conn: Connection;
+  onOpenSettings: () => void;
+  companion: CompanionClient;
+  sharing: boolean;
+}) {
+  const [attached, setAttached] = useState<SourceSummary[]>([]);
   const [text, setText] = useState("");
   const [choice, setChoice] = useState(AUTO);
-  const [clarify, setClarify] = useState<{ request: string; question: string; options: Specialist[] } | null>(null);
+  const [clarify, setClarify] = useState<{ request: string; question: string; options: Specialist[]; sources: SharedSource[] } | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLDivElement>(null);
@@ -31,17 +50,33 @@ export function ChatView({ a, busy, settings, conn, onOpenSettings }: { a: Retur
     setText(t);
     input.current?.focus();
   };
-  const send = (t = text) => {
+  /** Fetch the full content of attached sources; drop any that expired. */
+  const loadSources = async (): Promise<SharedSource[] | null> => {
+    const out: SharedSource[] = [];
+    for (const s of attached) {
+      try {
+        out.push(await companion.getSource(s.id));
+      } catch {
+        setAttached(attached.filter((x) => x.id !== s.id));
+        setRouteError(`“${s.scopeLabel}” is no longer shared (it expires after 30 minutes). Share it again or detach it.`);
+        return null;
+      }
+    }
+    return out;
+  };
+  const send = async (t = text) => {
     const v = t.trim();
     if (!v || busy) return;
     setRouteError(null);
     const route = a.session.router.route(v, host, choice);
     if (route.kind === "rejected") return setRouteError(route.reason);
+    const sources = await loadSources();
+    if (!sources) return;
     setText("");
-    if (route.kind === "clarify") return setClarify({ request: v, question: route.question, options: route.options });
+    if (route.kind === "clarify") return setClarify({ request: v, question: route.question, options: route.options, sources });
     setClarify(null);
-    if (route.kind === "specialist") a.run(v, route.specialist, route.how === "matched" ? route.reason : "You selected this specialist.");
-    else a.run(v);
+    if (route.kind === "specialist") a.run(v, route.specialist, route.how === "matched" ? route.reason : "You selected this specialist.", sources);
+    else a.run(v, undefined, undefined, sources);
   };
   const lastReport = [...a.items].reverse().find((i) => i.kind === "report") as { report: TaskReport; request: string; specialist?: Specialist } | undefined;
   const notReady = !settings.model || conn.state === "error" || conn.state === "unpaired";
@@ -126,9 +161,9 @@ export function ChatView({ a, busy, settings, conn, onOpenSettings }: { a: Retur
             question={clarify.question}
             options={clarify.options}
             onChoose={(sp) => {
-              const req = clarify.request;
+              const { request: req, sources } = clarify;
               setClarify(null);
-              a.run(req, sp ?? undefined, sp ? "You chose this specialist." : undefined);
+              a.run(req, sp ?? undefined, sp ? "You chose this specialist." : undefined, sources);
             }}
           />
         )}
@@ -153,6 +188,7 @@ export function ChatView({ a, busy, settings, conn, onOpenSettings }: { a: Retur
             </details>
           )}
         </div>
+        <SourcesBar companion={companion} available={sharing} attached={attached} setAttached={setAttached} host={host} />
         <textarea
           ref={input}
           value={text}

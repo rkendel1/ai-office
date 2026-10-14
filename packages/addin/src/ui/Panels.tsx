@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { ALL_SPECIALISTS, type AssistantSettings, type HistoryStore, type TaskRecord } from "@loai/core";
 import type { HostInfo } from "../services/host";
+import type { CompanionClient } from "../services/companion";
+import { SharePanel } from "./Sources";
 import { ActionLine, ApprovalCard, StatusBadge } from "./components";
 import type { useAssistant } from "./useAssistant";
 
 type A = ReturnType<typeof useAssistant>;
 
-export function ContextView({ a, host }: { a: A; host: HostInfo }) {
+export function ContextView({ a, host, companion, sharing }: { a: A; host: HostInfo; companion: CompanionClient; sharing: boolean }) {
   const items = a.session.context.inspected();
   const [checking, setChecking] = useState(false);
   void a.contextVersion; // re-render on context changes
@@ -25,6 +27,7 @@ export function ContextView({ a, host }: { a: A; host: HostInfo }) {
 
   return (
     <div className="panel">
+      <SharePanel a={a} companion={companion} available={sharing} />
       <p className="muted small">
         Exactly what the assistant has read in this session. Content is used for answers only within the scope shown here; everything else has not been inspected.
       </p>
@@ -40,7 +43,7 @@ export function ContextView({ a, host }: { a: A; host: HostInfo }) {
       {items.map((it) => (
         <details key={it.id} className="ctx">
           <summary>
-            <span className={`scope scope-${it.scope}`}>{it.scope}</span> {it.label}
+            <span className={`scope scope-${it.scope}`}>{it.scope === "source" ? "shared" : it.scope}</span> {it.label}
             {it.truncated && <span className="pill">partial</span>}
             {it.freshness !== "fresh" && <span className={`pill ${it.freshness === "stale" ? "pill-warn" : ""}`}>{it.freshness === "stale" ? "may have changed" : "unchecked"}</span>}
           </summary>
