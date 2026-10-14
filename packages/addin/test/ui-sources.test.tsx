@@ -23,7 +23,9 @@ const nodeFetch = globalThis.fetch;
 beforeAll(async () => {
   ollama = await startFakeOllama({ replies: [{ content: "Who is the audience for this deck?" }] });
   home = fs.mkdtempSync(path.join(os.tmpdir(), "loai-ui-"));
-  companion = await startCompanion(loadConfig({ home, port: 0, ollamaUrl: ollama.url, tlsCertPath: undefined, tlsKeyPath: undefined }), { log: () => {} });
+  // jsdom's AbortSignal is not an instance of Node's, which undici's fetch requires.
+  const stripSignal = ((u: any, init: any = {}) => nodeFetch(u, { ...init, signal: undefined })) as typeof fetch;
+  companion = await startCompanion(loadConfig({ home, port: 0, ollamaUrl: ollama.url, tlsCertPath: undefined, tlsKeyPath: undefined }), { log: () => {}, fetchImpl: stripSignal });
   const { code } = companion.pairing.issueCode();
   const token = (companion.pairing.redeem(code, "ui test") as { token: string }).token;
   globalThis.fetch = ((u: any, init: any = {}) => nodeFetch(u, { ...init, signal: undefined })) as typeof fetch;
