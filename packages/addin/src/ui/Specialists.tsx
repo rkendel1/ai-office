@@ -1,4 +1,4 @@
-import type { Plan, RouteResult, Specialist, TaskReport } from "@loai/core";
+import type { Plan, PlanExecutionReport, RouteResult, Specialist, TaskReport } from "@loai/core";
 
 export const AUTO = "auto";
 export const GENERAL = "general";
@@ -93,12 +93,14 @@ export function ClarifyCard({ question, options, onChoose }: { question: string;
   );
 }
 
-export function PlanCard({ plan, report }: { plan: Plan; report?: TaskReport }) {
+export function PlanCard({ plan, batch }: { plan: Plan; batch?: boolean }) {
   return (
     <div className="plan">
       <div className="small">
-        <b>Approved plan:</b> {plan.title}
+        <b>Approved plan{batch ? " (batch)" : ""}:</b> {plan.title}
       </div>
+      {plan.outcome && <div className="small muted">Outcome: {plan.outcome}</div>}
+      {plan.target && <div className="small muted">Target: {plan.target}</div>}
       <ol className="small">
         {plan.steps.map((s, i) => (
           <li key={i}>
@@ -107,7 +109,29 @@ export function PlanCard({ plan, report }: { plan: Plan; report?: TaskReport }) 
           </li>
         ))}
       </ol>
-      {!report && <div className="small muted">Each change in this plan is still shown to you for approval.</div>}
+      <div className="small muted">
+        {batch ? "The listed changes run without further prompts; anything else, or any failure, stops and asks." : "Each change in this plan is still shown to you for approval."}
+      </div>
+    </div>
+  );
+}
+
+const STEP_LABEL: Record<string, string> = { done: "✓", failed: "✗ failed", unverified: "? unverified", partial: "◐ partial", rejected: "✗ rejected", not_run: "○ not run" };
+
+export function PlanProgress({ exec }: { exec: PlanExecutionReport }) {
+  return (
+    <div className="plan-progress small" aria-label="Plan progress">
+      <b>Plan steps</b>
+      {exec.suspended && <div className="warn">Batch stopped: {exec.suspended}</div>}
+      <ul>
+        {exec.operations.map((o) => (
+          <li key={o.index} className={`step-${o.status}`}>
+            <span>{STEP_LABEL[o.status]}</span> {o.description}
+            {o.calls.length > 0 && <span className="muted"> · {o.calls.map((c) => (c.approvedBy === "plan" ? "plan" : c.approvedBy === "user" ? "you" : c.approvedBy)).join(", ")}</span>}
+          </li>
+        ))}
+      </ul>
+      {exec.undeclared.length > 0 && <div className="muted">{exec.undeclared.length} change(s) outside the plan were approved separately.</div>}
     </div>
   );
 }

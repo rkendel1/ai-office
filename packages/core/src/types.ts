@@ -139,7 +139,8 @@ export interface ExecutionRecord {
   target: string;
   risk: RiskClass;
   decision: PolicyDecision;
-  approval?: "approved" | "rejected" | "not_required";
+  /** "plan" = covered by a plan the user approved for bounded batch execution. */
+  approval?: "approved" | "rejected" | "not_required" | "plan";
   status: ExecutionStatus;
   output?: Json;
   verification?: Verification;

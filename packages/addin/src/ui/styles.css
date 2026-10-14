@@ -170,3 +170,7 @@ h3 { font-size: 13px; margin: 0 0 8px; }
 .checks .ok span:first-child { color: var(--ok); }
 .checks .bad { color: var(--err); }
 .checks .soft { color: var(--muted); }
+
+.plan-progress ul { list-style: none; margin: 4px 0; padding: 0; }
+.plan-progress .step-failed, .plan-progress .step-rejected { color: var(--err); }
+.plan-progress .step-unverified, .plan-progress .step-partial, .plan-progress .step-not_run { color: var(--warn); }

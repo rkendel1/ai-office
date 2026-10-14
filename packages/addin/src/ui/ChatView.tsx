@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AssistantSettings, Specialist, TaskReport } from "@loai/core";
 import type { Connection } from "./App";
 import { ActionLine, ApprovalCard } from "./components";
-import { AUTO, ClarifyCard, CompletionList, GENERAL, PlanCard, RouteHint, SpecialistCard, SpecialistPicker } from "./Specialists";
+import { AUTO, ClarifyCard, CompletionList, GENERAL, PlanCard, PlanProgress, RouteHint, SpecialistCard, SpecialistPicker } from "./Specialists";
 import type { useAssistant } from "./useAssistant";
 
 const STATE_TEXT: Record<string, string> = {
@@ -109,7 +109,7 @@ export function ChatView({ a, busy, settings, conn, onOpenSettings }: { a: Retur
                 </div>
               );
             case "plan":
-              return <PlanCard key={it.id} plan={it.plan} />;
+              return <PlanCard key={it.id} plan={it.plan} batch={it.batch} />;
             case "report":
               return (
                 <ReportCard
@@ -201,6 +201,7 @@ function ReportCard({ report, onRetry }: { report: TaskReport; onRetry?: () => v
         )}
       </div>
       <div className="small">{report.executionSummary}</div>
+      {report.planExecution && <PlanProgress exec={report.planExecution} />}
       <CompletionList report={report} />
       {report.limitations.length > 0 && (
         <details className="small">

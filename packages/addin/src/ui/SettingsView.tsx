@@ -282,6 +282,9 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
           </div>
         ))}
         {s.policy.modify === "allow" && <p className="warn small">Edits will be applied without a preview. Substantial overwrites still require confirmation.</p>}
+        <label className="check">
+          <input type="checkbox" checked={s.planBatchApproval} onChange={(e) => set({ planBatchApproval: e.target.checked })} /> Offer “approve plan as a batch” for multi-step plans (only the declared changes, on the declared targets; confirmations still ask)
+        </label>
       </section>
 
       <section>

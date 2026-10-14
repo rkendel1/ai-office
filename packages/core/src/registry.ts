@@ -194,14 +194,14 @@ export class CapabilityRegistry {
         return reject(`Could not prepare preview: ${errorMessage(e)}`, withMeta);
       }
       if (opts.ctx.signal?.aborted) return done({ ...base, ...withMeta, status: "cancelled", finishedAt: Date.now() });
-      const resp = await opts.approver({ capability: def.name, risk, decision, preview }, opts.ctx.signal);
+      const resp = await opts.approver({ capability: def.name, risk, decision, preview, args: call.arguments }, opts.ctx.signal);
       if (!resp.approved) {
         return reject(resp.reason ? `Rejected by user: ${resp.reason}` : "Rejected by user", {
           ...withMeta,
           approval: "rejected",
         });
       }
-      approval = "approved";
+      approval = resp.via === "plan" ? "plan" : "approved";
     }
 
     if (opts.ctx.signal?.aborted)

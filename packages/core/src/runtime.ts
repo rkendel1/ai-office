@@ -6,6 +6,8 @@ import { describeToolsAsText, extractToolCalls } from "./inference/toolcalls.js"
 import { stricter, type ApprovalPolicy, type Approver } from "./permissions.js";
 import { specialistPrompt } from "./specialists/index.js";
 import { isApprovedPlan, planFrom, type Plan } from "./specialists/shared/planning.js";
+import { PlanGrant, operationProblem, parseOperations, type PlanExecutionReport } from "./specialists/shared/plan-scope.js";
+import { decide } from "./permissions.js";
 import type { Specialist, TaskEvidence } from "./specialists/types.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { CapabilityRegistry } from "./registry.js";
@@ -41,7 +43,7 @@ export type RuntimeEvent =
   | { type: "context"; items: ContextItem[] }
   | { type: "notice"; level: "info" | "warning" | "error"; text: string }
   | { type: "specialist"; id: string; name: string }
-  | { type: "plan"; plan: Plan };
+  | { type: "plan"; plan: Plan; batch: boolean };
 
 export interface CompletionResult {
   id: string;
@@ -68,6 +70,8 @@ export interface TaskReport {
   completion?: CompletionResult[];
   /** The approved plan, if any. */
   plan?: Plan;
+  /** Per-operation execution status of the approved plan (declared operations only). */
+  planExecution?: PlanExecutionReport;
   /** Limitations that affected this task (unavailable capabilities, missing context, unmet criteria). */
   limitations: string[];
   /** The assistant asked a question and made no changes: the task waits for the user's answer. */
@@ -154,6 +158,14 @@ export class AgentRuntime {
     const planRequired = spec ? (typeof spec.constraints.requirePlan === "function" ? spec.constraints.requirePlan(request) : !!spec.constraints.requirePlan) : false;
     const policy = tightenPolicy(settings.policy, spec?.approval.policy);
     const maxToolCalls = Math.min(settings.limits.maxToolCalls, spec?.constraints.maxToolCalls ?? Number.POSITIVE_INFINITY);
+    let grant: PlanGrant | undefined;
+    let lastPlanBatch = false;
+    const suspend = (reason: string) => {
+      if (grant?.active) {
+        grant.suspend(reason);
+        emit({ type: "notice", level: "warning", text: `Batch execution stopped: ${reason}. Remaining changes will ask for approval.` });
+      }
+    };
 
     const setState = (state: TaskState, detail?: string) => emit({ type: "state", state, detail });
 
@@ -309,7 +321,9 @@ export class AgentRuntime {
         const key = call.name + stableStringify(call.arguments);
         let record: ExecutionRecord;
         let newContext: ContextItem[] = [];
-        const guarded = spec ? this.guardReason(spec, call, request, actions, planRequired) : undefined;
+        const guarded = this.guardReason(spec, call, request, actions, planRequired, allowlist);
+        const def = registry.get(call.name);
+        const matchIndex = grant && def?.modifies ? grant.match(call, actions) : undefined;
         if (userRejected.has(key)) {
           record = syntheticReject(call, "The user already rejected this exact change in this task. Do not propose it again.");
         } else if (guarded) {
@@ -326,9 +340,28 @@ export class AgentRuntime {
             allowlist,
             allowlistLabel: spec ? `the ${spec.name}` : undefined,
             approver: async (req, s) => {
+              // A declared operation inside the approved batch plan: no prompt, but it has already
+              // passed schema, scope and policy checks and will still be verified after execution.
+              if (grant?.active && def?.modifies) {
+                if (matchIndex !== undefined && req.decision === "approve") return { approved: true, via: "plan" };
+                if (matchIndex === undefined) {
+                  suspend(`“${req.preview.summary}” is not part of the approved plan`);
+                  req = { ...req, preview: { ...req.preview, warnings: [...(req.preview.warnings ?? []), "This change is not part of the approved plan."] } };
+                }
+              }
+              if (req.capability === "plan.propose" && settings.planBatchApproval) {
+                const ops = parseOperations(req.args ?? {});
+                if (ops.length) {
+                  const decisions = ops.map((o) => decide(policy, registry.get(o.capability)!.risk));
+                  req = { ...req, planBatch: { operations: ops.length, autoEligible: decisions.filter((d) => d !== "confirm" && d !== "deny").length, alwaysAsk: decisions.filter((d) => d === "confirm").length } };
+                }
+              }
               setState("awaiting_approval", req.capability);
               try {
-                return await this.deps.approver(req, s);
+                const resp = await this.deps.approver(req, s);
+                if (req.capability === "plan.propose") lastPlanBatch = resp.approved && !!resp.batch && !!req.planBatch;
+                // Only the runtime may mark an approval as covered by a plan.
+                return { approved: resp.approved, reason: resp.reason, batch: resp.batch };
               } finally {
                 setState("executing", req.capability);
               }
@@ -345,11 +378,18 @@ export class AgentRuntime {
           for (const it of newContext) taskContext.set(it.id, it);
           emit({ type: "context", items: newContext });
         }
+        if (grant && def?.modifies && call.name !== "plan.propose") {
+          grant.record(matchIndex, record, true);
+          if (matchIndex === undefined && record.status !== "rejected") suspend(`${record.target || record.capability} was not part of the approved plan`);
+          else if (["failed", "unverified", "partial"].includes(record.status)) suspend(`${record.target || record.capability} ${record.status === "failed" ? "failed" : record.status === "unverified" ? "could not be verified" : "only partly completed"}`);
+          else if (record.status === "rejected" && record.approval !== "rejected" && matchIndex !== undefined) suspend(`unexpected state: ${record.error ?? "the change was refused"}`);
+          else if (record.status === "cancelled") suspend("cancelled");
+        }
         if (isApprovedPlan(record)) {
           const plan = planFrom(record);
-          if (plan) emit({ type: "plan", plan });
+          grant = new PlanGrant(plan?.title ?? "plan", parseOperations(record.args), lastPlanBatch);
+          if (plan) emit({ type: "plan", plan, batch: grant.batch });
         }
-        const def = registry.get(call.name);
         if (def?.modifies && record.status !== "rejected" && record.status !== "cancelled") context.markHostStale(adapter.host);
         if (record.approval === "rejected") userRejected.add(key);
         else if (TERMINAL_FAILURES.has(record.status)) failures.set(key, (failures.get(key) ?? 0) + 1);
@@ -409,6 +449,13 @@ export class AgentRuntime {
         limitations.push(...unmet.map((c) => `${c.description}: ${c.detail ?? "not met"}`));
       }
     }
+    const planExecution = grant && grant.operations.length ? grant.report() : undefined;
+    if (planExecution) {
+      const done = planExecution.operations.filter((o) => o.status === "done").length;
+      const total = planExecution.operations.length;
+      executionSummary += ` Plan “${planExecution.title}”: ${done} of ${total} planned change(s) completed${planExecution.batch ? " (approved as a batch)" : ""}${planExecution.suspended ? `; batch stopped: ${planExecution.suspended}` : ""}.`;
+      if (done < total && outcome === "completed" && !awaitingInput) outcome = "partial";
+    }
     if (awaitingInput) executionSummary = "Waiting for your answer before continuing. " + executionSummary;
     const plan = actions.filter(isApprovedPlan).map(planFrom).filter((p): p is Plan => !!p).at(-1);
     if (limitReached) emit({ type: "notice", level: "warning", text: `Stopped: ${limitReached} reached.` });
@@ -430,6 +477,7 @@ export class AgentRuntime {
       specialist: spec ? { id: spec.id, name: spec.name } : undefined,
       completion,
       plan,
+      planExecution,
       limitations,
       awaitingInput,
     };
@@ -457,9 +505,16 @@ export class AgentRuntime {
     return out.record;
   }
 
-  /** Specialist-level narrowing: plan requirement and the specialist's own guard. */
-  private guardReason(spec: Specialist, call: ToolCall, request: string, actions: ExecutionRecord[], planRequired: boolean): string | undefined {
+  /** Narrowing before dispatch: plan validity, plan requirement and the specialist's own guard. */
+  private guardReason(spec: Specialist | undefined, call: ToolCall, request: string, actions: ExecutionRecord[], planRequired: boolean, allowlist?: Set<string>): string | undefined {
     const def = this.deps.registry.get(call.name);
+    if (call.name === "plan.propose") {
+      const problems = parseOperations(call.arguments)
+        .map((op) => operationProblem(op, this.deps.registry.get(op.capability), (n) => (!allowlist || allowlist.has(n)) && !!this.deps.registry.get(n)?.hosts.includes(this.deps.adapter.host)))
+        .filter(Boolean);
+      if (problems.length) return `The plan declares operations that cannot be authorised: ${problems.join("; ")}.`;
+    }
+    if (!spec) return undefined;
     const planApproved = actions.some(isApprovedPlan);
     if (planRequired && def?.modifies && !planApproved)
       return `The ${spec.name} needs an approved plan before making changes. Call plan.propose with the outline first.`;

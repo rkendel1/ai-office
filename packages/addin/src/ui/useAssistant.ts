@@ -24,7 +24,7 @@ export type ChatItem =
   | { id: string; kind: "report"; report: TaskReport; request: string; specialist?: Specialist }
   | { id: string; kind: "notice"; level: "info" | "warning" | "error"; text: string }
   | { id: string; kind: "specialist"; specialist: Specialist; reason?: string }
-  | { id: string; kind: "plan"; plan: Plan };
+  | { id: string; kind: "plan"; plan: Plan; batch: boolean };
 
 export interface PendingApproval {
   request: ApprovalRequest;
@@ -127,7 +127,7 @@ export function useAssistant(host: HostInfo, getProvider: () => InferenceProvide
             setItems((xs) => [...xs, { id: nid(), kind: "notice", level: e.level, text: e.text }]);
             break;
           case "plan":
-            setItems((xs) => [...xs, { id: nid(), kind: "plan", plan: e.plan }]);
+            setItems((xs) => [...xs, { id: nid(), kind: "plan", plan: e.plan, batch: e.batch }]);
             break;
         }
       };

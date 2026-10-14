@@ -4,6 +4,7 @@ import {
   createSession,
   normalizeSettings,
   type ApprovalRequest,
+  type ApprovalResponse,
   type Approver,
   type AssistantSettings,
   type HostAdapter,
@@ -16,15 +17,16 @@ export function settings(over: Partial<AssistantSettings> = {}): AssistantSettin
 
 export class RecordingApprover {
   readonly requests: ApprovalRequest[] = [];
-  constructor(public answer: boolean | ((r: ApprovalRequest) => boolean) = true) {}
+  constructor(public answer: boolean | ((r: ApprovalRequest) => boolean | ApprovalResponse) = true) {}
   readonly fn: Approver = async (req) => {
     this.requests.push(req);
-    const ok = typeof this.answer === "function" ? this.answer(req) : this.answer;
-    return { approved: ok, reason: ok ? undefined : "no thanks" };
+    const a = typeof this.answer === "function" ? this.answer(req) : this.answer;
+    if (typeof a === "object") return a;
+    return { approved: a, reason: a ? undefined : "no thanks" };
   };
 }
 
-export function setup(adapter: HostAdapter, provider: InferenceProvider, opts: { approve?: boolean | ((r: ApprovalRequest) => boolean); settings?: Partial<AssistantSettings> } = {}) {
+export function setup(adapter: HostAdapter, provider: InferenceProvider, opts: { approve?: boolean | ((r: ApprovalRequest) => boolean | ApprovalResponse); settings?: Partial<AssistantSettings> } = {}) {
   const approver = new RecordingApprover(opts.approve ?? true);
   const history = new MemoryHistoryStore();
   const s = settings(opts.settings);
