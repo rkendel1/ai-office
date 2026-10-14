@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import { loadAdminToken } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { CompanionStore } from "./store.js";
-import { VERSION, startCompanion } from "./server.js";
+import { VERSION, readAcceptanceRecords, startCompanion } from "./server.js";
+import { ACCEPTANCE_SCENARIOS, acceptanceMatrix } from "@loai/core";
 
 const HELP = `Local Office AI companion ${VERSION}
 
@@ -19,6 +20,7 @@ Commands:
   clients              List paired add-in clients
   revoke               Revoke all paired clients
   clear-history        Delete all local task history
+  acceptance [--out f] Print the live/mocked acceptance status matrix from saved records
   config               Show the effective configuration and file locations
 
 Options:
@@ -126,6 +128,16 @@ async function main() {
       await s.clear();
       s.close();
       console.log("Local history cleared.");
+      break;
+    }
+    case "acceptance": {
+      const cfg = loadConfig();
+      const md = acceptanceMatrix(readAcceptanceRecords(cfg.home), ACCEPTANCE_SCENARIOS);
+      const out = arg("--out");
+      if (out) {
+        fs.writeFileSync(out, md + "\n");
+        console.log(`Wrote ${out}`);
+      } else console.log(md);
       break;
     }
     case "config": {

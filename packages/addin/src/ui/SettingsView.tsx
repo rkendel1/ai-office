@@ -4,6 +4,7 @@ import type { CompanionClient } from "../services/companion";
 import type { HostInfo } from "../services/host";
 import type { Connection } from "./App";
 import { Field } from "./components";
+import { AcceptancePanel } from "./Acceptance";
 
 const RISK_LABEL: Record<RiskClass, string> = {
   read_selection: "Read the selection",
@@ -325,6 +326,8 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
           </pre>
         )}
       </section>
+
+      <AcceptancePanel host={host} companion={companion} getProvider={getProvider} settings={s} />
     </div>
   );
 }

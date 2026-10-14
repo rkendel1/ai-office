@@ -185,3 +185,6 @@ h3 { font-size: 13px; margin: 0 0 8px; }
 .sources-panel p { margin: 0; }
 .chip-attached { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 8px; border-radius: 12px; background: var(--bg-3); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scope-source { color: var(--warn); }
+
+.acc-result { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.acc-result select { width: auto; }

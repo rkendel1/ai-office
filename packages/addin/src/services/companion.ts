@@ -45,7 +45,7 @@ export class CompanionClient {
     return t ? { authorization: `Bearer ${t}` } : {};
   }
 
-  private async call<T>(path: string, init: RequestInit = {}): Promise<T> {
+  async call<T>(path: string, init: RequestInit = {}): Promise<T> {
     let res: Response;
     try {
       res = await fetch(this.baseUrl + path, {

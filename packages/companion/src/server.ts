@@ -4,7 +4,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { isLoopbackUrl, minimizeRecord, normalizeSettings, type TaskRecord } from "@loai/core";
+import { isLoopbackUrl, minimizeRecord, normalizeSettings, type AcceptanceRecord, type TaskRecord } from "@loai/core";
 import { Pairing, authenticate, loadAdminToken, type Principal } from "./auth.js";
 import type { CompanionConfig } from "./config.js";
 import { CompanionStore } from "./store.js";
@@ -209,6 +209,19 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
       await store.clear();
       return json(res, 200, { cleared: true });
     }
+    // Acceptance records (live Office test results) are kept as JSON files for the status matrix.
+    if (route === "POST /v1/acceptance") {
+      const rec = (await readJson(req)) as AcceptanceRecord;
+      const problem = acceptanceProblem(rec);
+      if (problem) throw new HttpError(400, problem);
+      const dir = path.join(cfg.home, "acceptance");
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const file = path.join(dir, `${rec.environment.recordedAt.replace(/[^0-9TZ]/g, "")}-${rec.mode}-${rec.scenarioId}.json`);
+      fs.writeFileSync(file, JSON.stringify(rec, null, 2), { mode: 0o600 });
+      return json(res, 201, { stored: path.basename(file) });
+    }
+    if (route === "GET /v1/acceptance") return json(res, 200, { records: readAcceptanceRecords(cfg.home) });
+
     // Cross-app sources: shared on an explicit user action, memory only, expiring.
     if (route === "POST /v1/sources") {
       const r = sources.add(await readJson(req));
@@ -339,4 +352,29 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
         });
       }),
   };
+}
+
+function acceptanceProblem(r: AcceptanceRecord): string | undefined {
+  if (!r || r.schema !== 1) return "Unsupported record schema";
+  if (typeof r.scenarioId !== "string" || !/^[\w.-]{1,100}$/.test(r.scenarioId)) return "Invalid scenarioId";
+  if (r.mode !== "live" && r.mode !== "mocked") return "Invalid mode";
+  if (!["passed", "failed", "blocked", "error"].includes(r.outcome)) return "Invalid outcome";
+  if (!r.environment || typeof r.environment.recordedAt !== "string" || typeof r.environment.officeApp !== "string") return "Missing environment";
+  if (!Array.isArray(r.checks) || !Array.isArray(r.manual)) return "Missing checks";
+  return undefined;
+}
+
+export function readAcceptanceRecords(home: string): AcceptanceRecord[] {
+  const dir = path.join(home, "acceptance");
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .flatMap((f) => {
+      try {
+        return [JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as AcceptanceRecord];
+      } catch {
+        return [];
+      }
+    });
 }

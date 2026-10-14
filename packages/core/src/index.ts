@@ -25,3 +25,4 @@ export * from "./hosts/excel-analysis.js";
 export * from "./hosts/outlook-thread.js";
 export * from "./hosts/powerpoint-build.js";
 export * from "./hosts/powerpoint-qa.js";
+export * from "./acceptance/index.js";

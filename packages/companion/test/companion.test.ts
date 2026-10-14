@@ -239,3 +239,22 @@ describe("source expiry", () => {
     fs.rmSync(h2, { recursive: true, force: true });
   });
 });
+
+describe("acceptance records", () => {
+  it("stores valid live records as files and lists them; rejects malformed ones", async () => {
+    const token = await pairClient();
+    const h = { origin: ORIGIN, authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const rec = {
+      schema: 1, scenarioId: "word.editor.scoped-edit", title: "t", host: "word", mode: "live", model: { kind: "scripted" },
+      environment: { officeApp: "Word", officeVersion: "16.0.18129", platform: "PC", addinVersion: "0.3.0", recordedAt: "2026-10-13T12:00:00.000Z" },
+      outcome: "passed", checks: [{ id: "a", description: "d", passed: true, evidence: "e" }], visual: "not-applicable", manual: [], durationMs: 10,
+    };
+    const ok = await req({ method: "POST", path: "/v1/acceptance", headers: h, body: JSON.stringify(rec) });
+    expect(ok.status).toBe(201);
+    expect(fs.existsSync(path.join(home, "acceptance", ok.body.stored))).toBe(true);
+    expect((await req({ method: "POST", path: "/v1/acceptance", headers: h, body: JSON.stringify({ ...rec, scenarioId: "../../etc/passwd" }) })).status).toBe(400);
+    expect((await req({ method: "POST", path: "/v1/acceptance", headers: h, body: JSON.stringify({ ...rec, mode: "imagined" }) })).status).toBe(400);
+    const list = await req({ path: "/v1/acceptance", headers: h });
+    expect(list.body.records).toHaveLength(1);
+  });
+});
