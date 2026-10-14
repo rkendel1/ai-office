@@ -35,7 +35,7 @@ The assistant **cannot send email**, run code, use the shell, read files, or rea
 
 ## Quick start (development)
 
-Requirements: Node.js ≥ 22.13, Ollama with at least one model (`ollama pull qwen2.5:7b` — any model works; tool-calling models work best), and Office desktop for live use.
+Requirements: Node.js ≥ 22.13, Ollama with at least one model (for example `ollama pull qwen2.5:7b`; any model can be selected, and none has been evaluated yet — see [docs/model-compatibility.md](docs/model-compatibility.md)), and Office desktop for live use.
 
 ```bash
 npm install

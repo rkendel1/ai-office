@@ -9,6 +9,7 @@ import { loadConfig } from "./config.js";
 import { CompanionStore } from "./store.js";
 import { VERSION, readAcceptanceRecords, startCompanion } from "./server.js";
 import { ACCEPTANCE_SCENARIOS, acceptanceMatrix } from "@loai/core";
+import { evalMatrix, readEvalRuns, runModelEvaluation } from "./evals.js";
 
 const HELP = `Local Office AI companion ${VERSION}
 
@@ -21,6 +22,10 @@ Commands:
   revoke               Revoke all paired clients
   clear-history        Delete all local task history
   acceptance [--out f] Print the live/mocked acceptance status matrix from saved records
+  eval --model <name>  Evaluate local Ollama model(s) on the evaluation suite (local endpoint only)
+       [--cases ids|categories] [--repeat n] [--timeout seconds] [--out dir] [--gpu "description"]
+       [--self-test]        Run the harness against its reference scripts (no model needed)
+  eval-matrix [--dir d] [--out f]  Print the model compatibility matrix from saved run files
   config               Show the effective configuration and file locations
 
 Options:
@@ -133,6 +138,36 @@ async function main() {
     case "acceptance": {
       const cfg = loadConfig();
       const md = acceptanceMatrix(readAcceptanceRecords(cfg.home), ACCEPTANCE_SCENARIOS);
+      const out = arg("--out");
+      if (out) {
+        fs.writeFileSync(out, md + "\n");
+        console.log(`Wrote ${out}`);
+      } else console.log(md);
+      break;
+    }
+    case "eval": {
+      const cfg = loadConfig(arg("--ollama") ? { ollamaUrl: arg("--ollama") } : {});
+      const list = (v?: string) => (v ? v.split(",").map((x) => x.trim()).filter(Boolean) : []);
+      const { runs, files } = await runModelEvaluation({
+        endpoint: cfg.ollamaUrl,
+        models: list(arg("--model")),
+        select: list(arg("--cases")),
+        repetitions: arg("--repeat") ? Number(arg("--repeat")) : 1,
+        timeoutMs: arg("--timeout") ? Number(arg("--timeout")) * 1000 : undefined,
+        outDir: arg("--out") ?? path.join(cfg.home, "evals"),
+        gpu: arg("--gpu"),
+        selfTest: process.argv.includes("--self-test"),
+        log: (l) => console.log(l),
+      });
+      for (const f of files) console.log(`Wrote ${f}`);
+      if (runs.some((r) => r.summary.errors === r.summary.runs)) process.exitCode = 2;
+      break;
+    }
+    case "eval-matrix": {
+      const dir = arg("--dir") ?? "evals/results";
+      const { invalid } = readEvalRuns(dir);
+      for (const i of invalid) console.error(`Skipped invalid run file ${i}`);
+      const md = evalMatrix(dir);
       const out = arg("--out");
       if (out) {
         fs.writeFileSync(out, md + "\n");

@@ -44,13 +44,9 @@ The add-in checks requirement sets at runtime (`Office.context.requirements.isSe
 
 ## Models
 
-Any Ollama chat model works. Guidance:
+Any Ollama chat model can be selected. Models that report native tool calling (`/api/show` capabilities) use it; others use the text tool protocol, where malformed calls are fed back and retried within the model-call limit.
 
-| Model class | Tool calling | Notes |
-|---|---|---|
-| Llama 3.1/3.2/3.3, Qwen 2.5/3, Mistral Nemo/Small, Command-R | Native | Recommended. 7–8B models handle single-step edits well; multi-step Excel work benefits from 14B+ |
-| Gemma, Phi, older Llama 2-era models | Text protocol | Usable; more malformed calls (these are fed back and retried within the model-call limit) |
-| Reasoning models (DeepSeek-R1 distills, QwQ) | Varies | Higher latency; set a larger timeout |
+**No model has been evaluated yet**, so this project makes no claim about which models work well. Measured results, and how to produce them with `loai-companion eval`, are in [model-compatibility.md](model-compatibility.md). Only models listed there have been tested.
 
 Set **Context size (num_ctx)** to what your RAM/VRAM allows; the runtime uses the smaller of that and the model's maximum, shrinks Office content to fit, and fails clearly when even the minimum does not fit.
 

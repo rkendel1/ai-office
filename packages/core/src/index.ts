@@ -26,3 +26,4 @@ export * from "./hosts/outlook-thread.js";
 export * from "./hosts/powerpoint-build.js";
 export * from "./hosts/powerpoint-qa.js";
 export * from "./acceptance/index.js";
+export * from "./evals/index.js";

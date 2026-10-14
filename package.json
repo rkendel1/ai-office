@@ -21,7 +21,10 @@
     "dev:companion": "npm run dev -w @loai/companion",
     "start": "npm run start -w @loai/companion",
     "validate:manifests": "npm run validate -w @loai/addin",
-    "package": "node scripts/package-release.mjs"
+    "package": "node scripts/package-release.mjs",
+    "eval": "node --no-warnings packages/companion/dist/cli.js eval",
+    "eval:self-test": "node --no-warnings packages/companion/dist/cli.js eval --self-test --out evals/self-test",
+    "eval:matrix": "node --no-warnings packages/companion/dist/cli.js eval-matrix --dir evals/results"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.2",
