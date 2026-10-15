@@ -151,6 +151,11 @@ export function ChatView({
                   key={it.id}
                   report={it.report}
                   onRetry={it === lastReport && it.report.outcome !== "completed" && !it.report.awaitingInput ? () => a.run(it.request, it.specialist) : undefined}
+                  onProceed={
+                    it === lastReport && !busy && it.specialist && !it.specialist.constraints.readOnly && /No changes were made/i.test(it.report.executionSummary)
+                      ? () => a.run("Yes, apply these changes now.", it.specialist, "Approved from the Apply changes button.")
+                      : undefined
+                  }
                 />
               );
           }
@@ -221,7 +226,7 @@ export function ChatView({
 
 const OUTCOME: Record<string, string> = { completed: "Done", partial: "Partly done", failed: "Did not complete", cancelled: "Stopped" };
 
-function ReportCard({ report, onRetry }: { report: TaskReport; onRetry?: () => void }) {
+function ReportCard({ report, onRetry, onProceed }: { report: TaskReport; onRetry?: () => void; onProceed?: () => void }) {
   const used = report.contextUsed.filter((c) => c.scope !== "metadata");
   return (
     <div className={`report report-${report.awaitingInput ? "partial" : report.outcome}`}>
@@ -237,6 +242,13 @@ function ReportCard({ report, onRetry }: { report: TaskReport; onRetry?: () => v
         )}
       </div>
       <div className="small">{report.executionSummary}</div>
+      {onProceed && (
+        <div className="row gap">
+          <button className="primary small-btn" onClick={onProceed}>
+            Proceed — apply changes
+          </button>
+        </div>
+      )}
       {report.planExecution && <PlanProgress exec={report.planExecution} />}
       <CompletionList report={report} />
       {report.limitations.length > 0 && (

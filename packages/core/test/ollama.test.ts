@@ -98,3 +98,14 @@ describe("privacy: a full task only talks to the local endpoint", () => {
     expect(urls.filter((u) => u.endsWith("/api/chat"))).toHaveLength(2);
   });
 });
+
+import { repetitionCut } from "../src/inference/ollama";
+describe("repetition guard", () => {
+  it("cuts a block repeated four times in a row", () => {
+    const unit = "[Observation] The summary is vague about scope and ownership of the work. [Recommendation] Name the owner. ";
+    expect(repetitionCut("Intro. " + unit.repeat(4))).toBe(("Intro. " + unit).length);
+  });
+  it("leaves normal text alone", () => {
+    expect(repetitionCut("A normal paragraph about execution. ".repeat(3) + "and then something else entirely, with new words.")).toBeUndefined();
+  });
+});

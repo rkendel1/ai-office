@@ -326,13 +326,16 @@ export class AgentRuntime {
           // must plan first and has not yet done so gets a nudge rather than ending the task empty-handed.
           const reply = parsed.text.trim();
           const planPending = planRequired && !actions.some((a) => a.capability === "plan.propose" && a.status === "succeeded");
-          if (nudges < 2 && (!reply || (planPending && !/\?\s*$/.test(reply)))) {
+          const approvalIntent = /^\s*(yes|yep|proceed|go ahead|apply|do it|implement|approved?|ok(ay)?|confirm)\b/i.test(request);
+          if (nudges < 2 && (!reply || approvalIntent || (planPending && !/\?\s*$/.test(reply)))) {
             nudges++;
             transcript.push(
               { role: "assistant", content: res.message.content || "(no reply)" },
               {
                 role: "user",
-                content: planPending
+                content: approvalIntent
+                  ? "The user has already approved. Do not ask again and do not describe the changes. Reply now with a single capability call that makes the first edit (the application will show the user a diff to approve)."
+                  : planPending
                   ? "You have not proposed a plan yet. Reply with a single capability call (plan.propose) containing your design, or ask one clarifying question."
                   : "Your reply was empty. Reply with a single capability call, or answer the request in plain text.",
               },

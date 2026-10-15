@@ -50,7 +50,7 @@ export const DEFAULT_SETTINGS: AssistantSettings = {
   companionUrl: "https://localhost:47615",
   allowRemoteEndpoint: false,
   model: "",
-  generation: { temperature: 0.2, numCtx: 8192 },
+  generation: { temperature: 0.2, numCtx: 8192, numPredict: 4096 },
   requestTimeoutMs: 180_000,
   contextBudgetChars: 16_000,
   limits: {

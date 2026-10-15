@@ -2,6 +2,20 @@ import type { UnsupportedContent, WordDriver, WordParagraph, WordStyle } from "@
 import { supports } from "./requirements";
 
 /** Word driver over Office.js (WordApi 1.1+, enhanced with 1.3 where available). */
+/**
+ * Turn on Word's Track Changes so every edit the assistant makes shows as a reviewable revision.
+ * Best effort (WordApi 1.4); set localStorage "loai.trackChanges" to "off" to disable.
+ */
+async function trackChanges(ctx: Word.RequestContext) {
+  try {
+    if (localStorage.getItem("loai.trackChanges") === "off") return;
+    ctx.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+    await ctx.sync();
+  } catch {
+    /* older Word, or tracking locked by the document: edit without it */
+  }
+}
+
 export class OfficeWordDriver implements WordDriver {
   private get v13() {
     return supports("WordApi", "1.3");
@@ -77,6 +91,7 @@ export class OfficeWordDriver implements WordDriver {
 
   async replaceParagraphs(start: number, end: number, text: string) {
     await Word.run(async (ctx) => {
+      await trackChanges(ctx);
       const ps = ctx.document.body.paragraphs;
       ps.load("items");
       await ctx.sync();
@@ -97,6 +112,7 @@ export class OfficeWordDriver implements WordDriver {
 
   async replaceSelection(text: string) {
     return Word.run(async (ctx) => {
+      await trackChanges(ctx);
       const r = ctx.document.getSelection().insertText(text, "Replace");
       r.load("text");
       await ctx.sync();
@@ -106,6 +122,7 @@ export class OfficeWordDriver implements WordDriver {
 
   async insertParagraphs(at: "start" | "end" | { before: number } | { after: number }, lines: string[], style?: WordStyle) {
     return Word.run(async (ctx) => {
+      await trackChanges(ctx);
       const body = ctx.document.body;
       const ps = body.paragraphs;
       ps.load("items");

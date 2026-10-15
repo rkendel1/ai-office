@@ -217,9 +217,18 @@ export class OllamaProvider implements InferenceProvider {
     let content = "";
     const toolCalls: OllamaToolCall[] = [];
     let last: any = {};
+    // WebKit does not always reject a pending read() when the request is aborted, so race it explicitly.
+    const aborted = new Promise<never>((_, reject) => {
+      const fail = () => reject(new InferenceError("aborted", "Request cancelled"));
+      if (req.signal?.aborted) fail();
+      else req.signal?.addEventListener("abort", fail, { once: true });
+    });
+    aborted.catch(() => {});
+    let sinceCheck = 0;
+    let repeated = false;
     try {
       for (;;) {
-        const { value, done } = await reader.read();
+        const { value, done } = await Promise.race([reader.read(), aborted]);
         if (done) break;
         buf += decoder.decode(value, { stream: true });
         let nl: number;
@@ -238,17 +247,44 @@ export class OllamaProvider implements InferenceProvider {
           if (piece) {
             content += piece;
             req.onDelta?.(piece);
+            sinceCheck += piece.length;
+            if (sinceCheck >= 200) {
+              sinceCheck = 0;
+              const cut = repetitionCut(content);
+              if (cut !== undefined) {
+                content = content.slice(0, cut);
+                repeated = true;
+              }
+            }
           }
           if (Array.isArray(chunk.message?.tool_calls)) toolCalls.push(...chunk.message.tool_calls);
           last = chunk;
         }
+        if (repeated) break;
       }
     } catch (e) {
+      reader.cancel().catch(() => {});
       if (req.signal?.aborted) throw new InferenceError("aborted", "Request cancelled");
       throw e;
     }
-    return fromOllama({ role: "assistant", content, tool_calls: toolCalls }, last);
+    if (repeated) reader.cancel().catch(() => {});
+    const out = fromOllama({ role: "assistant", content, tool_calls: toolCalls }, last);
+    return repeated ? { ...out, doneReason: "repetition" } : out;
   }
+}
+
+/**
+ * Detects a model stuck in a loop: a block of 60+ characters that has just repeated 4 times in a row.
+ * Returns the length to keep (up to and including the first copy), or undefined.
+ */
+export function repetitionCut(text: string): number | undefined {
+  const tail = text.slice(-2400);
+  const offset = text.length - tail.length;
+  for (let len = 60; len <= 600; len++) {
+    const unit = tail.slice(-len);
+    if (tail.length >= len * 4 && tail.slice(-len * 4) === unit.repeat(4)) return offset + tail.length - len * 3;
+  }
+  return undefined;
 }
 
 function compactOptions(o: Record<string, unknown>) {
