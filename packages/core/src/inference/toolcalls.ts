@@ -83,7 +83,35 @@ export function parseTextToolCalls(content: string): ParsedReply {
       }
     }
   }
+  // Qwen-style XML calls: <tool_call><function=name><parameter=key>value</parameter></function></tool_call>
+  if (!toolCalls.length) {
+    const xml = /<tool_call>([\s\S]*?)(?:<\/tool_call>|$)/g;
+    while ((m = xml.exec(content))) {
+      const fn = /<function=([\w.\-]+)>/.exec(m[1]!);
+      if (!fn) {
+        malformed.push(m[1]!.trim());
+        continue;
+      }
+      const args: Record<string, Json> = {};
+      const param = /<parameter(?:=([\w.\-]+)>|>\s*([\w.\-]+)"?>)([\s\S]*?)<\/parameter>/g;
+      let pm: RegExpExecArray | null;
+      while ((pm = param.exec(m[1]!))) {
+        const raw = pm[3]!.trim();
+        let v: Json = raw;
+        try {
+          v = JSON.parse(raw) as Json;
+        } catch {
+          /* plain string */
+        }
+        args[(pm[1] ?? pm[2])!] = v;
+      }
+      toolCalls.push({ id: newId("call"), name: fn[1]!, arguments: args });
+      blocks.push(m[0]);
+    }
+  }
   for (const b of blocks) text = text.replace(b, "");
+  // Drop stray closing tags left by malformed XML replies.
+  if (toolCalls.length) text = text.replace(/<\/?(?:tool_call|function|parameter)[^>]*>/g, "");
   return { toolCalls, text: text.trim(), malformed };
 }
 

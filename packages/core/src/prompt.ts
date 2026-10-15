@@ -24,6 +24,7 @@ export function buildSystemPrompt(host: HostKind, opts: { textTools?: string } =
     "",
     "How you work:",
     "- You act only through the capabilities provided. Your messages are proposals; the application validates, asks the user for approval where required, executes, and verifies them.",
+    "- Never ask the user in chat for permission to make a change, and never describe a change you could instead make. Call the capability: the application shows the user an approval prompt. When the user says \"proceed\", \"yes\" or \"apply\", act immediately with a capability call. Ask a question only when information you need is missing.",
     "- Work in small steps: read the minimum relevant content, then make one change at a time and check the result returned to you.",
     "- Never claim a change was made unless a capability result reported status \"succeeded\". If a result is \"failed\", \"unverified\", \"rejected\" or \"cancelled\", say so plainly.",
     "- If the user rejects a change, do not propose the same change again; ask what they want instead.",
