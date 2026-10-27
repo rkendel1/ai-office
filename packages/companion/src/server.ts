@@ -12,12 +12,18 @@ import { SourceStore } from "./sources.js";
 
 export const VERSION = "0.3.0";
 
-/** Ollama endpoints the companion forwards. Everything else is refused. */
+/** Ollama endpoints the companion forwards when configured for Ollama. */
 const OLLAMA_ROUTES: Record<string, "GET" | "POST"> = {
   "/api/version": "GET",
   "/api/tags": "GET",
   "/api/show": "POST",
   "/api/chat": "POST",
+};
+
+/** OpenAI-compatible endpoints (Atomic Chat) the companion forwards. */
+const OPENAI_ROUTES: Record<string, "GET" | "POST"> = {
+  "/models": "GET",
+  "/chat/completions": "POST",
 };
 
 class HttpError extends Error {
@@ -55,14 +61,17 @@ export interface Companion {
 export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: string) => void; fetchImpl?: typeof fetch; now?: () => number } = {}): Promise<Companion> {
   const log = opts.log ?? ((m: string) => console.log(m));
   const fetchImpl = opts.fetchImpl ?? fetch;
-  if (!cfg.allowRemoteOllama && !isLoopbackUrl(cfg.ollamaUrl))
-    throw new Error(`Ollama URL ${cfg.ollamaUrl} is not on this machine. Set allowRemoteOllama to true only if you accept that document content leaves this computer.`);
+  if (!cfg.allowRemoteLlm && !isLoopbackUrl(cfg.llmUrl))
+    throw new Error(`Model URL ${cfg.llmUrl} is not on this machine. Set allowRemoteLlm to true only if you accept that document content leaves this computer.`);
 
   const store = new CompanionStore(cfg.dbPath);
   const adminToken = loadAdminToken(cfg.home);
   const pairing = new Pairing(store);
   const sources = new SourceStore(opts.now);
-  const ollamaBase = cfg.ollamaUrl.replace(/\/+$/, "");
+  const llmBase = cfg.llmUrl.replace(/\/+$/, "");
+  // Ollama serves both /api and /v1; OpenAI-compatible apps live under /v1.
+  const ollamaBase = llmBase.endsWith("/v1") ? llmBase.slice(0, -3) : llmBase;
+  const openaiBase = llmBase.endsWith("/v1") ? llmBase : `${llmBase}/v1`;
   const tls = cfg.tlsCertPath && cfg.tlsKeyPath && fs.existsSync(cfg.tlsCertPath) && fs.existsSync(cfg.tlsKeyPath);
 
   const allowedHosts = new Set<string>();
@@ -160,25 +169,42 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
       return json(res, 200, { revoked: store.revokeClients() });
     }
 
-    if (url.pathname.startsWith("/v1/ollama/")) return proxyOllama(req, res, url.pathname.slice("/v1/ollama".length));
+    if (url.pathname.startsWith("/v1/openai/")) return proxyLlm(req, res, "/v1/openai", openaiBase, OPENAI_ROUTES);
+    if (url.pathname.startsWith("/v1/ollama/")) {
+      if (cfg.provider !== "ollama")
+        throw new HttpError(404, "This companion is configured for an OpenAI-compatible model app. Choose Atomic Chat in the add-in's Settings.");
+      return proxyLlm(req, res, "/v1/ollama", ollamaBase, OLLAMA_ROUTES);
+    }
     if (route === "POST /v1/models/pull") return pullModel(req, res);
 
     if (route === "GET /v1/diagnostics") {
-      let ollama: unknown;
+      let llm: unknown;
       try {
-        const r = await fetchImpl(ollamaBase + "/api/version", { signal: AbortSignal.timeout(4000) });
-        ollama = r.ok ? { reachable: true, ...((await r.json()) as object) } : { reachable: false, status: r.status };
+        const probe = cfg.provider === "ollama" ? `${ollamaBase}/api/version` : `${openaiBase}/models`;
+        const r = await fetchImpl(probe, { signal: AbortSignal.timeout(4000) });
+        if (r.ok) {
+          const body = (await r.json().catch(() => ({}))) as any;
+          llm =
+            cfg.provider === "ollama"
+              ? { reachable: true, ...body }
+              : { reachable: true, models: Array.isArray(body?.data) ? body.data.map((m: any) => m.id).filter(Boolean) : [] };
+        } else llm = { reachable: false, status: r.status };
       } catch (e) {
-        ollama = { reachable: false, error: (e as Error).message };
+        llm = { reachable: false, error: (e as Error).message };
       }
       return json(res, 200, {
         companion: VERSION,
         node: process.version,
         platform: `${process.platform}-${process.arch}`,
         tls: !!tls,
-        ollamaUrl: ollamaBase,
-        ollamaIsLocal: isLoopbackUrl(ollamaBase),
-        ollama,
+        provider: cfg.provider,
+        llmUrl: llmBase,
+        llmIsLocal: isLoopbackUrl(llmBase),
+        llm,
+        // Legacy field names kept for older add-in builds.
+        ollamaUrl: llmBase,
+        ollamaIsLocal: isLoopbackUrl(llmBase),
+        ollama: llm,
         historyRecords: (await store.list(500)).length,
         pairedClients: store.listClients().length,
       });
@@ -249,22 +275,29 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
     if (p.kind !== "admin") throw new HttpError(403, "Admin only");
   }
 
-  async function proxyOllama(req: http.IncomingMessage, res: http.ServerResponse, sub: string) {
-    const method = OLLAMA_ROUTES[sub];
+  async function proxyLlm(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    prefix: string,
+    upstreamBase: string,
+    routes: Record<string, "GET" | "POST">,
+  ) {
+    const sub = new URL(req.url ?? "/", "http://localhost").pathname.slice(prefix.length);
+    const method = routes[sub];
     if (!method || method !== req.method) throw new HttpError(404, "Endpoint not available through the companion");
     const body = method === "POST" ? JSON.stringify(await readJson(req)) : undefined;
     const ac = new AbortController();
     res.on("close", () => ac.abort());
     let upstream: Response;
     try {
-      upstream = await fetchImpl(ollamaBase + sub, {
+      upstream = await fetchImpl(upstreamBase + sub, {
         method,
         headers: body ? { "content-type": "application/json" } : undefined,
         body,
         signal: ac.signal,
       });
     } catch (e) {
-      throw new HttpError(502, `Cannot reach Ollama at ${ollamaBase}: ${(e as Error).message}`);
+      throw new HttpError(502, `Cannot reach the local model app at ${upstreamBase}: ${(e as Error).message}`);
     }
     res.writeHead(upstream.status, {
       "content-type": upstream.headers.get("content-type") ?? "application/json",
@@ -274,8 +307,10 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
     Readable.fromWeb(upstream.body as any).pipe(res);
   }
 
-  /** Explicit, user-initiated model download (Settings → Install model). */
+  /** Explicit, user-initiated model download (Settings → Install model). Ollama only. */
   async function pullModel(req: http.IncomingMessage, res: http.ServerResponse) {
+    if (cfg.provider !== "ollama")
+      throw new HttpError(400, "Install models in Atomic Chat; the companion can only download Ollama models.");
     const body = await readJson(req);
     if (typeof body.model !== "string" || !/^[\w.\-:/]{1,200}$/.test(body.model)) throw new HttpError(400, "Invalid model name");
     if (body.confirm !== true) throw new HttpError(400, "Model downloads require explicit confirmation");

@@ -56,18 +56,31 @@ export function App({ host }: { host: HostInfo }) {
       return;
     }
     try {
-      const r = await getProvider().ping();
-      setConn(r.ok ? { state: "ok", detail: `Ollama ${r.version ?? ""}`.trim() } : { state: "error", detail: r.error });
+      const provider = getProvider();
+      const r = await provider.ping();
+      setConn(r.ok ? { state: "ok", detail: r.version ? `Model app ${r.version}` : "Connected" } : { state: "error", detail: r.error });
+      // Models are discovered from the running app. Pick the first one when
+      // nothing is selected yet, or when the selected model is no longer there
+      // (for example after switching from Ollama to Atomic Chat).
+      if (r.ok) {
+        try {
+          const models = await provider.listModels();
+          const current = settingsRef.current.model;
+          if (models.length && (!current || !models.some((m) => m.name === current))) setSettings({ ...settingsRef.current, model: models[0]!.name });
+        } catch {
+          /* Settings ▸ Refresh will show the error */
+        }
+      }
     } catch (e) {
       setConn({ state: "error", detail: (e as Error).message });
     }
-  }, [getProvider]);
+  }, [getProvider, setSettings]);
 
   useEffect(() => {
     checkConnection();
     const t = setInterval(checkConnection, 30_000);
     return () => clearInterval(t);
-  }, [checkConnection, settings.transport, settings.ollamaEndpoint, settings.companionUrl, pairVersion]);
+  }, [checkConnection, settings.transport, settings.provider, settings.endpoint, settings.companionUrl, pairVersion]);
 
   return (
     <div className="app">

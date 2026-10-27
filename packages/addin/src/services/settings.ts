@@ -6,6 +6,7 @@ const KEY = "loai.settings";
 export function loadSettings(): AssistantSettings {
   try {
     const raw = window.localStorage.getItem(KEY);
+    // normalizeSettings migrates settings written before Atomic Chat support.
     const s = normalizeSettings(raw ? JSON.parse(raw) : DEFAULT_SETTINGS);
     // When the add-in is served by the companion, default to that origin.
     if (!raw && location.port === "47615") s.companionUrl = location.origin;

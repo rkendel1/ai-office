@@ -202,6 +202,23 @@ describe("settings", () => {
     expect(s.policy.send).toBe("confirm");
     expect(s.allowRemoteEndpoint).toBe(false);
   });
+
+  it("defaults to Atomic Chat and migrates settings that only had an Ollama endpoint", () => {
+    const fresh = normalizeSettings({});
+    expect(fresh.provider).toBe("openai");
+    expect(fresh.endpoint).toBe("http://127.0.0.1:1337/v1");
+    // The old default Ollama endpoint migrates to the new default.
+    const oldDefault = normalizeSettings({ transport: "direct", ollamaEndpoint: "http://127.0.0.1:11434", model: "qwen2.5:7b" });
+    expect(oldDefault.provider).toBe("openai");
+    expect(oldDefault.endpoint).toBe("http://127.0.0.1:1337/v1");
+    // A custom Ollama port is an explicit choice and is preserved.
+    const custom = normalizeSettings({ transport: "direct", ollamaEndpoint: "http://127.0.0.1:11435", model: "qwen2.5:7b" });
+    expect(custom.provider).toBe("ollama");
+    expect(custom.endpoint).toBe("http://127.0.0.1:11435");
+    const explicit = normalizeSettings({ provider: "ollama" });
+    expect(explicit.provider).toBe("ollama");
+    expect(explicit.endpoint).toBe("http://127.0.0.1:11434");
+  });
 });
 
 describe("history", () => {

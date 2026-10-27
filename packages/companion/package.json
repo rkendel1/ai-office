@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Local companion service for Local Office AI: authenticated loopback API, Ollama proxy, local history.",
+  "description": "Local companion service for Local Office AI: authenticated loopback API, local-model proxy, local history.",
   "bin": {
     "loai-companion": "dist/cli.js"
   },

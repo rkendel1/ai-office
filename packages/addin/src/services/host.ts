@@ -5,6 +5,7 @@ import {
   FakePowerPointDriver,
   FakeWordDriver,
   OllamaProvider,
+  OpenAIProvider,
   OutlookAdapter,
   PowerPointAdapter,
   WordAdapter,
@@ -82,13 +83,22 @@ function demoHost(kind: string): HostInfo {
 /** Build the inference provider. No fallback: if this fails, the task fails. */
 export function createProvider(s: AssistantSettings, companion: CompanionClient): InferenceProvider {
   if (s.transport === "companion") {
-    return new OllamaProvider({
-      baseUrl: companion.baseUrl + "/v1/ollama",
+    if (s.provider === "ollama")
+      return new OllamaProvider({
+        baseUrl: companion.baseUrl + "/v1/ollama",
+        headers: companion.authHeaders(),
+        timeoutMs: s.requestTimeoutMs,
+        // The companion itself enforces that the model app is local; the companion URL must be local too.
+        allowRemote: false,
+      });
+    return new OpenAIProvider({
+      baseUrl: companion.baseUrl + "/v1/openai",
       headers: companion.authHeaders(),
       timeoutMs: s.requestTimeoutMs,
-      // The companion itself enforces that Ollama is local; the companion URL must be local too.
       allowRemote: false,
     });
   }
-  return new OllamaProvider({ baseUrl: s.ollamaEndpoint, timeoutMs: s.requestTimeoutMs, allowRemote: s.allowRemoteEndpoint });
+  if (s.provider === "ollama")
+    return new OllamaProvider({ baseUrl: s.endpoint, timeoutMs: s.requestTimeoutMs, allowRemote: s.allowRemoteEndpoint });
+  return new OpenAIProvider({ baseUrl: s.endpoint, timeoutMs: s.requestTimeoutMs, allowRemote: s.allowRemoteEndpoint });
 }

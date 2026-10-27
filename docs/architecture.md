@@ -1,6 +1,6 @@
 # Architecture
 
-Three deployable pieces: the **add-in** (task pane), the **companion** (local service), and **Ollama**. Everything runs on the user's machine.
+Three deployable pieces: the **add-in** (task pane), the **companion** (local service), and a **local model app** — Atomic Chat by default, or Ollama. Everything runs on the user's machine.
 
 ## Components (spec §7.1)
 
@@ -11,8 +11,8 @@ Three deployable pieces: the **add-in** (task pane), the **companion** (local se
 | C. Context manager | `core/src/context.ts` | What was inspected, at what scope, whether truncated, whether stale; budgeted packaging; untrusted-content fencing |
 | D. Agent runtime | `core/src/runtime.ts` | Bounded loop, one action per turn, retry limits, cancellation, honest outcome classification |
 | E. Capability registry | `core/src/registry.ts` | Only path from a model proposal to Office state |
-| F. Inference adapter | `core/src/inference/ollama.ts` | Model discovery, `/api/show` capabilities and context length, streaming chat, native tool calls; `toolcalls.ts` provides a text protocol for models without tool support |
-| G. Local companion | `packages/companion` | Loopback HTTPS; pairing-based auth; Ollama allowlist proxy; serves the built add-in |
+| F. Inference adapter | `core/src/inference/openai.ts` (Atomic Chat/OpenAI-compatible), `core/src/inference/ollama.ts` | Model discovery, streaming chat, native tool calls; `toolcalls.ts` provides a text protocol for models without tool support. Ollama also reports `/api/show` capabilities and context length |
+| G. Local companion | `packages/companion` | Loopback HTTPS; pairing-based auth; local-model allowlist proxy (`/v1/openai` and `/v1/ollama`); serves the built add-in |
 | H. Local storage | `companion/src/store.ts` | Built-in `node:sqlite`: history (references, not document copies), settings, hashed client tokens |
 | Specialist layer | `core/src/specialists` | Task-specific configurations of the runtime: instructions, capability allowlists, required context, guards, completion criteria; deterministic router. See [specialists.md](specialists.md). |
 
@@ -78,11 +78,11 @@ Handlers return a *compensation* where one is safe: restoring prior paragraph te
 
 ## Why the companion exists
 
-- Browsers block or restrict calls from an HTTPS task pane to `http://localhost:11434`, and Ollama's CORS must be configured per origin. The companion provides one authenticated, same-machine HTTPS endpoint instead.
+- Browsers block or restrict calls from an HTTPS task pane to a local HTTP server (`http://127.0.0.1:1337` for Atomic Chat, `http://localhost:11434` for Ollama), and Ollama's CORS must be configured per origin. The companion provides one authenticated, same-machine HTTPS endpoint instead.
 - It holds history and settings in SQLite without involving any cloud service.
-- It is not an OS bridge: it forwards exactly four Ollama endpoints (`version`, `tags`, `show`, `chat`), plus a user-initiated, explicitly confirmed model download. The model has no capability that reaches it.
+- It is not an OS bridge: for Atomic Chat it forwards `models` and `chat/completions`; for Ollama it forwards exactly four endpoints (`version`, `tags`, `show`, `chat`), plus a user-initiated, explicitly confirmed model download. The model has no capability that reaches it.
 
-The add-in can also talk to Ollama directly (`transport: direct`) if `OLLAMA_ORIGINS` allows the add-in origin; history is then session-only.
+The add-in can also talk to the local model app directly (`transport: direct`); history is then session-only. Direct mode to Atomic Chat needs no extra configuration; direct mode to Ollama needs `OLLAMA_ORIGINS` to allow the add-in origin.
 
 ## Deliberate limits
 

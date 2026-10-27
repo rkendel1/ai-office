@@ -39,12 +39,13 @@ The add-in checks requirement sets at runtime (`Office.context.requirements.isSe
 | Component | Requirement |
 |---|---|
 | Node.js (companion) | ≥ 22.13 (uses built-in `node:sqlite`) |
-| Ollama | ≥ 0.4 for native tool calling; older versions work via the text tool protocol. `/api/show` `capabilities` is used when present (≥ 0.6), otherwise inferred from the template |
+| Atomic Chat (default) | Any loaded model; the OpenAI-compatible API at `http://127.0.0.1:1337/v1` is used, including native tool calling |
+| Ollama (optional) | ≥ 0.4 for native tool calling; older versions work via the text tool protocol. `/api/show` `capabilities` is used when present (≥ 0.6), otherwise inferred from the template |
 | TLS | `office-addin-dev-certs` certificate for `https://localhost` (required on macOS; recommended everywhere) |
 
 ## Models
 
-Any Ollama chat model can be selected. Models that report native tool calling (`/api/show` capabilities) use it; others use the text tool protocol, where malformed calls are fed back and retried within the model-call limit.
+The add-in discovers models from the running app's `/v1/models` endpoint (Atomic Chat) or `/api/tags` (Ollama), and selects the first one when none is chosen. Atomic Chat models are treated as supporting native tool calling; Ollama models use it only when `/api/show` reports it, otherwise the text tool protocol is used, where malformed calls are fed back and retried within the model-call limit.
 
 **No model has been evaluated yet**, so this project makes no claim about which models work well. Measured results, and how to produce them with `loai-companion eval`, are in [model-compatibility.md](model-compatibility.md). Only models listed there have been tested.
 

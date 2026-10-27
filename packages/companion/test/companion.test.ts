@@ -3,10 +3,11 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OllamaProvider } from "@loai/core";
+import { OllamaProvider, OpenAIProvider } from "@loai/core";
 import { loadConfig } from "../src/config.js";
 import { startCompanion, type Companion } from "../src/server.js";
 import { startFakeOllama } from "../../core/test/fake-ollama.js";
+import { startFakeOpenAI } from "../../core/test/fake-openai.js";
 
 let c: Companion;
 let ollama: Awaited<ReturnType<typeof startFakeOllama>>;
@@ -14,8 +15,8 @@ let home: string;
 const ORIGIN = "https://localhost:3000";
 
 /** Raw request so tests can set Host/Origin headers browsers would send. */
-function req(p: { method?: string; path: string; headers?: Record<string, string>; body?: string }): Promise<{ status: number; body: any; text: string }> {
-  const u = new URL(c.url);
+function reqAt(base: string, p: { method?: string; path: string; headers?: Record<string, string>; body?: string }): Promise<{ status: number; body: any; text: string }> {
+  const u = new URL(base);
   return new Promise((resolve, reject) => {
     const r = http.request(
       { host: "127.0.0.1", port: u.port, path: p.path, method: p.method ?? "GET", headers: { host: `localhost:${u.port}`, ...p.headers } },
@@ -37,6 +38,10 @@ function req(p: { method?: string; path: string; headers?: Record<string, string
     if (p.body) r.write(p.body);
     r.end();
   });
+}
+
+function req(p: { method?: string; path: string; headers?: Record<string, string>; body?: string }) {
+  return reqAt(c.url, p);
 }
 
 async function pairClient(): Promise<string> {
@@ -133,6 +138,15 @@ describe("companion security", () => {
   it("refuses a remote Ollama URL unless explicitly allowed", async () => {
     await expect(startCompanion(loadConfig({ home, port: 0, ollamaUrl: "https://ollama.example.com" }), { log: () => {} })).rejects.toThrow(/not on this machine/);
   });
+
+  it("defaults to Atomic Chat but keeps legacy Ollama settings working", () => {
+    const fresh = loadConfig({ home, tlsCertPath: undefined, tlsKeyPath: undefined });
+    expect(fresh.provider).toBe("openai");
+    expect(fresh.llmUrl).toBe("http://127.0.0.1:1337/v1");
+    const legacy = loadConfig({ home, ollamaUrl: "http://127.0.0.1:11434", tlsCertPath: undefined, tlsKeyPath: undefined });
+    expect(legacy.provider).toBe("ollama");
+    expect(legacy.llmUrl).toBe("http://127.0.0.1:11434");
+  });
 });
 
 describe("companion API", () => {
@@ -148,6 +162,38 @@ describe("companion API", () => {
     const r = await p.chat({ model: "llama3.1:8b", messages: [{ role: "user", content: "hi" }], onDelta: (d) => deltas.push(d) });
     expect(r.message.content).toBe("Hello from local model");
     expect(deltas.length).toBeGreaterThan(1);
+  });
+
+  it("proxies an OpenAI-compatible model app (Atomic Chat)", async () => {
+    const ai = await startFakeOpenAI({ replies: [{ content: "Hello from Atomic Chat" }] });
+    const home2 = fs.mkdtempSync(path.join(os.tmpdir(), "loai-openai-"));
+    const comp = await startCompanion(
+      loadConfig({ home: home2, port: 0, llmUrl: ai.url, provider: "openai", tlsCertPath: undefined, tlsKeyPath: undefined, allowedOrigins: [ORIGIN] }),
+      { log: () => {} },
+    );
+    try {
+      const { code } = comp.pairing.issueCode();
+      const paired = await reqAt(comp.url, { method: "POST", path: "/v1/pair", headers: { origin: ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ code, name: "test" }) });
+      expect(paired.status).toBe(200);
+      const token = paired.body.token;
+      const p = new OpenAIProvider({ baseUrl: comp.url + "/v1/openai", headers: { authorization: `Bearer ${token}` } });
+      expect((await p.listModels())[0]!.name).toBe("AtomicChat/Qwen3-8B");
+      const deltas: string[] = [];
+      const r = await p.chat({ model: "AtomicChat/Qwen3-8B", messages: [{ role: "user", content: "hi" }], onDelta: (d) => deltas.push(d) });
+      expect(r.message.content).toBe("Hello from Atomic Chat");
+      expect(deltas.length).toBeGreaterThan(1);
+      const diag = await reqAt(comp.url, { path: "/v1/diagnostics", headers: { origin: ORIGIN, authorization: `Bearer ${token}` } });
+      expect(diag.body.provider).toBe("openai");
+      expect(diag.body.llmIsLocal).toBe(true);
+      expect(diag.body.llm.models).toContain("AtomicChat/Qwen3-8B");
+      // The Ollama route is refused for an OpenAI-compatible upstream.
+      const ollamaRoute = await reqAt(comp.url, { path: "/v1/ollama/api/tags", headers: { origin: ORIGIN, authorization: `Bearer ${token}` } });
+      expect(ollamaRoute.status).toBe(404);
+    } finally {
+      await comp.close();
+      await ai.close();
+      fs.rmSync(home2, { recursive: true, force: true });
+    }
   });
 
   it("stores, lists, and clears history; minimises content", async () => {

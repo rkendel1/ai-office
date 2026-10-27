@@ -1,6 +1,15 @@
 import { DEFAULT_POLICY, sanitizePolicy, type ApprovalPolicy } from "./permissions.js";
 import type { GenerationOptions } from "./types.js";
 
+/** Language of the local model app's HTTP API. */
+export type LocalProviderKind = "openai" | "ollama";
+
+/** Default endpoint for each supported local model API. */
+export const DEFAULT_ENDPOINTS: Record<LocalProviderKind, string> = {
+  openai: "http://127.0.0.1:1337/v1",
+  ollama: "http://127.0.0.1:11434",
+};
+
 export interface RuntimeLimits {
   /** Max capability calls per task. */
   maxToolCalls: number;
@@ -15,10 +24,17 @@ export interface RuntimeLimits {
 }
 
 export interface AssistantSettings {
-  /** How the add-in reaches Ollama. */
+  /** How the add-in reaches the local model app. */
   transport: "companion" | "direct";
-  /** Ollama base URL (used directly, or by the companion). */
-  ollamaEndpoint: string;
+  /**
+   * Local model API. "openai" covers Atomic Chat and any other
+   * OpenAI-compatible server; "ollama" uses Ollama's native API.
+   */
+  provider: LocalProviderKind;
+  /** Base URL of the local model app (used directly, or by the companion). */
+  endpoint: string;
+  /** @deprecated Kept so settings saved by earlier versions still load. */
+  ollamaEndpoint?: string;
   companionUrl: string;
   /** Explicit opt-in to non-loopback endpoints. Off by default; never automatic. */
   allowRemoteEndpoint: boolean;
@@ -46,7 +62,8 @@ export interface AssistantSettings {
 
 export const DEFAULT_SETTINGS: AssistantSettings = {
   transport: "companion",
-  ollamaEndpoint: "http://127.0.0.1:11434",
+  provider: "openai",
+  endpoint: DEFAULT_ENDPOINTS.openai,
   companionUrl: "https://localhost:47615",
   allowRemoteEndpoint: false,
   model: "",
@@ -78,9 +95,21 @@ export function normalizeSettings(raw: unknown): AssistantSettings {
   const d = DEFAULT_SETTINGS;
   const lim = (r.limits ?? {}) as Partial<RuntimeLimits>;
   const gen = (r.generation ?? {}) as GenerationOptions;
+  // Earlier versions stored only ollamaEndpoint. A custom Ollama URL is
+  // preserved; the old default (11434) migrates to the new default, Atomic Chat.
+  const legacyEndpoint = typeof r.ollamaEndpoint === "string" && r.ollamaEndpoint ? r.ollamaEndpoint : undefined;
+  const legacyCustom = !!legacyEndpoint && legacyEndpoint.replace(/\/+$/, "") !== DEFAULT_ENDPOINTS.ollama;
+  const provider: LocalProviderKind = r.provider === "ollama" ? "ollama" : r.provider === "openai" ? "openai" : legacyCustom ? "ollama" : d.provider;
+  const endpoint =
+    typeof r.endpoint === "string" && r.endpoint
+      ? r.endpoint
+      : provider === "ollama"
+        ? legacyEndpoint ?? DEFAULT_ENDPOINTS.ollama
+        : d.endpoint;
   return {
     transport: r.transport === "direct" ? "direct" : "companion",
-    ollamaEndpoint: typeof r.ollamaEndpoint === "string" && r.ollamaEndpoint ? r.ollamaEndpoint : d.ollamaEndpoint,
+    provider,
+    endpoint,
     companionUrl: typeof r.companionUrl === "string" && r.companionUrl ? r.companionUrl : d.companionUrl,
     allowRemoteEndpoint: r.allowRemoteEndpoint === true,
     model: typeof r.model === "string" ? r.model : "",

@@ -10,6 +10,7 @@ export * from "./prompt.js";
 export * from "./runtime.js";
 export * from "./diff.js";
 export * from "./inference/ollama.js";
+export * from "./inference/openai.js";
 export * from "./inference/toolcalls.js";
 export * from "./hosts/adapter.js";
 export * from "./hosts/a1.js";

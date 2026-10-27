@@ -436,6 +436,7 @@ export class AgentRuntime {
         transcript.push({
           role: "tool",
           toolName: call.name,
+          toolCallId: call.id,
           content: JSON.stringify(toolResultForModel(record, newContext, skipped)),
         });
         // Newly read content is already in the tool result; avoid duplicating it in the package.

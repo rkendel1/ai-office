@@ -178,6 +178,8 @@ export interface ChatMessage {
   toolCalls?: ToolCall[];
   /** For role=tool. */
   toolName?: string;
+  /** For role=tool: the id of the assistant tool call this answers (OpenAI-compatible APIs require it). */
+  toolCallId?: string;
 }
 
 export interface ToolSpec {

@@ -13,6 +13,7 @@ npx vitest run packages/core/test/security.test.ts   # one suite
 | `core/test/runtime.test.ts` | tool-call / retry limits, cancellation, one action per turn, text-protocol fallback, context-window overflow, missing model, staleness detection, history without content, state transitions |
 | `core/test/acceptance.test.ts` | the four end-to-end scenarios (Word, Excel, PowerPoint, Outlook) plus rejection, stale edits, failed verification despite a model claiming success, unsupported vs empty content, selection scope, destructive escalation, undo |
 | `core/test/security.test.ts` | adversarial document/email content; obedient-model attacks |
+| `core/test/openai.test.ts` | Atomic Chat/OpenAI-compatible discovery, `/v1` normalisation, streaming, reasoning suppression, tool-call assembly, message/tool formats, error classification, remote refusal; **privacy**: a full task only contacts loopback |
 | `core/test/ollama.test.ts` | Ollama connectivity, discovery, streaming, tool-call format, error classification, remote refusal; **privacy**: a full task only contacts loopback and does not fall back |
 | `companion/test/companion.test.ts` | companion auth, origin/host checks, pairing, admin separation, proxy allowlist, history CRUD, settings floors, diagnostics |
 | `addin/test/ui.test.tsx` | renders the real task pane (jsdom) and drives ask → propose → approve → apply → verify through the UI |
@@ -49,7 +50,7 @@ Run on every row of the [compatibility matrix](compatibility.md) before a releas
 
 **Setup**
 1. `npm run build && npm start`; sideload the manifest; pair; choose a model.
-2. Settings ▸ Run diagnostics: Ollama reachable, model test response, all expected API sets ✓.
+2. Settings ▸ Run diagnostics: local model app reachable, model test response, all expected API sets ✓.
 
 **Word**
 1. Open a 3–5 page document. Ask "What are the main points?" → answer cites paragraph numbers; Context tab shows paragraphs read (full or partial, never "full" when only the selection was read).
@@ -78,7 +79,7 @@ Run on every row of the [compatibility matrix](compatibility.md) before a releas
 
 **Privacy**
 1. With a network monitor (Little Snitch, Windows Resource Monitor, or `tcpdump -i any not host 127.0.0.1`) run a Word task → no connections other than localhost (and the one-time Office.js CDN load).
-2. Stop Ollama, run a task → clear failure, no other endpoint contacted.
+2. Stop the local model app, run a task → clear failure, no other endpoint contacted.
 
 **Specialists** (run each in its host; record results in compatibility.md)
 1. Word — Writer: "Turn this rough draft into an executive-ready strategy document" → outline approval, then sections; headings styled; checks all ✓. Editor: edit a selected paragraph → only it changes. Reviewer: findings cite ¶ numbers; nothing changes. Summarizer on a 300-paragraph document → says it read part.

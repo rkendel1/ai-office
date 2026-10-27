@@ -12,7 +12,7 @@ $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) { Die "Node.js 22.13 or newer is required (https://nodejs.org)." }
 & node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22||(a===22&&b>=13)?0:1)'
 if ($LASTEXITCODE -ne 0) { Die "Node.js is too old; 22.13 or newer is required." }
-if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) { Say "Ollama was not found. Install it from https://ollama.com and pull a model." }
+if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) { Say "Ollama was not found. The default local model app is Atomic Chat at http://127.0.0.1:1337/v1; Ollama is optional (https://ollama.com)." }
 
 # 2. Integrity
 Say "Verifying release files"

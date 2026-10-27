@@ -10,7 +10,7 @@
   <ProviderName>Local Office AI</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Local Office AI{{SUFFIX}}"/>
-  <Description DefaultValue="A local-first AI assistant for Word, Excel and PowerPoint, powered by models running on your computer through Ollama."/>
+  <Description DefaultValue="A local-first AI assistant for Word, Excel and PowerPoint, powered by models running on your computer through Atomic Chat or Ollama."/>
   <IconUrl DefaultValue="{{BASE}}/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="{{BASE}}/assets/icon-64.png"/>
   <SupportUrl DefaultValue="{{BASE}}/taskpane.html"/>
@@ -113,7 +113,7 @@
         <bt:String id="Button.Label" DefaultValue="Assistant"/>
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="GetStarted.Description" DefaultValue="Open the assistant from the Home tab. It runs on your computer using Ollama."/>
+        <bt:String id="GetStarted.Description" DefaultValue="Open the assistant from the Home tab. It runs on your computer using Atomic Chat or Ollama."/>
         <bt:String id="Button.Tooltip" DefaultValue="Open the local AI assistant"/>
       </bt:LongStrings>
     </Resources>

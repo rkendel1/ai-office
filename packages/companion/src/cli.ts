@@ -30,7 +30,9 @@ Commands:
 
 Options:
   --port <n>           Port (default 47615)
-  --ollama <url>       Ollama URL (default http://127.0.0.1:11434)
+  --llm <url>          Local model base URL (default http://127.0.0.1:1337/v1)
+  --provider <kind>    openai (Atomic Chat) or ollama (default openai)
+  --ollama <url>       Shorthand for --llm <url> --provider ollama (default Ollama URL)
   --static <dir>       Directory of the built add-in to serve
 `;
 
@@ -89,13 +91,15 @@ async function main() {
       const defaultStatic = path.resolve(here, "../../addin/dist");
       const cfg = loadConfig({
         ...(arg("--port") ? { port: Number(arg("--port")) } : {}),
-        ...(arg("--ollama") ? { ollamaUrl: arg("--ollama") } : {}),
+        ...(arg("--llm") ? { llmUrl: arg("--llm") } : {}),
+        ...(arg("--provider") ? { provider: arg("--provider") as "openai" | "ollama" } : {}),
+        ...(arg("--ollama") ? { llmUrl: arg("--ollama"), provider: "ollama" as const } : {}),
         staticDir: arg("--static") ?? (fs.existsSync(defaultStatic) ? defaultStatic : undefined),
       });
       const c = await startCompanion(cfg);
       console.log(`Local Office AI companion ${VERSION}`);
       console.log(`  Listening:  ${c.url} (loopback only)`);
-      console.log(`  Ollama:     ${cfg.ollamaUrl}`);
+      console.log(`  Model app:  ${cfg.provider === "ollama" ? "Ollama" : "Atomic Chat (OpenAI-compatible)"} at ${cfg.llmUrl}`);
       console.log(`  Add-in:     ${cfg.staticDir ? cfg.staticDir : "(not served; use the dev server)"}`);
       console.log(`  Data:       ${cfg.home}`);
       if (!c.url.startsWith("https")) console.log("  WARNING: no TLS certificate found. Office on macOS requires HTTPS. Run: npx office-addin-dev-certs install");
@@ -146,10 +150,11 @@ async function main() {
       break;
     }
     case "eval": {
-      const cfg = loadConfig(arg("--ollama") ? { ollamaUrl: arg("--ollama") } : {});
+      const cfg = loadConfig();
+      const endpoint = arg("--ollama") ?? (cfg.provider === "ollama" ? cfg.llmUrl : "http://127.0.0.1:11434");
       const list = (v?: string) => (v ? v.split(",").map((x) => x.trim()).filter(Boolean) : []);
       const { runs, files } = await runModelEvaluation({
-        endpoint: cfg.ollamaUrl,
+        endpoint,
         models: list(arg("--model")),
         select: list(arg("--cases")),
         repetitions: arg("--repeat") ? Number(arg("--repeat")) : 1,

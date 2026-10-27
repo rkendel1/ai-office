@@ -1,13 +1,13 @@
 # Troubleshooting
 
-Start with **Settings ▸ Run diagnostics** in the task pane. It tests Ollama, lists models, sends a fixed test prompt (no document content), checks the companion and lists Office API support.
+Start with **Settings ▸ Run diagnostics** in the task pane. It tests the selected local model app (Atomic Chat by default, or Ollama), lists models, sends a fixed test prompt (no document content), checks the companion and lists Office API support.
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | Red dot, "Cannot reach the companion" | Companion not running, or certificate not trusted | `loai-companion start`; `npx office-addin-dev-certs install`; open https://localhost:47615/v1/health in a browser once |
 | "Not paired" | First run, token revoked, or companion data reset | `loai-companion pair`, enter the code in Settings |
-| "Cannot reach Ollama" | Ollama not running or different port | Start Ollama; check `loai-companion config` → `ollamaUrl`; `ollama list` |
-| "Model … is not installed" | Selected model removed | Pick another in Settings, or `ollama pull <model>` |
+| "Cannot reach the local model app" | Atomic Chat/Ollama not running, or a different port | Start the app; check `loai-companion config` → `provider`, `llmUrl`; confirm `curl http://127.0.0.1:1337/v1/models` (Atomic Chat) or `ollama list` |
+| "Model … is not available" | The app has no model loaded, or it was removed | Load a model in Atomic Chat (then **Refresh** in Settings), or `ollama pull <model>` |
 | "This task needs about N tokens but the model is limited to M" | Content + conversation exceed the context window | Select a smaller portion; raise **Context size**; start a new conversation; use a model with a larger window |
 | Timeouts on large models | Generation slower than the timeout | Raise **Request timeout**; use a smaller/quantized model |
 | Model "talks about" calling tools instead of acting | Model without native tool calling | Diagnostics shows "text tool protocol"; choose a model that reports native tool calling (Diagnostics); lower temperature. See [model-compatibility.md](model-compatibility.md) for measured results |

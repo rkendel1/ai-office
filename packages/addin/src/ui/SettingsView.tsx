@@ -1,10 +1,15 @@
 import { useEffect, useState } from "react";
-import { DEFAULT_POLICY, isLoopbackUrl, type AssistantSettings, type InferenceProvider, type ModelDetails, type ModelInfo, type PolicyDecision, type RiskClass } from "@loai/core";
+import { DEFAULT_ENDPOINTS, DEFAULT_POLICY, isLoopbackUrl, type AssistantSettings, type InferenceProvider, type LocalProviderKind, type ModelDetails, type ModelInfo, type PolicyDecision, type RiskClass } from "@loai/core";
 import type { CompanionClient } from "../services/companion";
 import type { HostInfo } from "../services/host";
 import type { Connection } from "./App";
 import { Field } from "./components";
 import { AcceptancePanel } from "./Acceptance";
+
+const PROVIDER_LABEL: Record<LocalProviderKind, string> = {
+  openai: "Atomic Chat (OpenAI-compatible)",
+  ollama: "Ollama",
+};
 
 const RISK_LABEL: Record<RiskClass, string> = {
   read_selection: "Read the selection",
@@ -51,7 +56,9 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
   const loadModels = async () => {
     setModelErr(null);
     try {
-      setModels(await getProvider().listModels());
+      const ms = await getProvider().listModels();
+      setModels(ms);
+      if (ms.length && (!s.model || !ms.some((m) => m.name === s.model))) set({ model: ms[0]!.name });
     } catch (e) {
       setModels(null);
       setModelErr((e as Error).message);
@@ -81,10 +88,10 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
     const out: string[] = [];
     const p = getProvider();
     const ping = await p.ping();
-    out.push(ping.ok ? `✓ Ollama reachable (${ping.version ?? "unknown version"})` : `✗ Ollama not reachable: ${ping.error}`);
+    out.push(ping.ok ? `✓ ${PROVIDER_LABEL[s.provider]} reachable` : `✗ ${PROVIDER_LABEL[s.provider]} not reachable: ${ping.error}`);
     try {
       const ms = await p.listModels();
-      out.push(`✓ ${ms.length} model(s) installed`);
+      out.push(`✓ ${ms.length} model(s) available${ms.length ? `: ${ms.slice(0, 5).map((m) => m.name).join(", ")}${ms.length > 5 ? ", …" : ""}` : ""}`);
     } catch (e) {
       out.push(`✗ Could not list models: ${(e as Error).message}`);
     }
@@ -104,7 +111,10 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
     if (s.transport === "companion" && companion.paired) {
       try {
         const d = await companion.diagnostics();
-        out.push(`✓ Companion ${d.companion} (${d.platform}, TLS ${d.tls ? "on" : "off"}), Ollama ${d.ollamaIsLocal ? "local" : "REMOTE"} at ${d.ollamaUrl}`);
+        const url = d.llmUrl ?? d.ollamaUrl;
+        const local = d.llmIsLocal ?? d.ollamaIsLocal;
+        const kind = d.provider === "ollama" ? "Ollama" : d.provider === "openai" ? "Atomic Chat" : "Local model app";
+        out.push(`✓ Companion ${d.companion} (${d.platform}, TLS ${d.tls ? "on" : "off"}), ${kind} ${local === false ? "REMOTE" : "local"} at ${url}`);
       } catch (e) {
         out.push(`✗ Companion: ${(e as Error).message}`);
       }
@@ -113,7 +123,11 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
     setDiag(out);
   };
 
-  const endpointRemote = s.transport === "direct" && !isLoopbackUrl(s.ollamaEndpoint);
+  const endpointRemote = s.transport === "direct" && !isLoopbackUrl(s.endpoint);
+  const changeProvider = (provider: LocalProviderKind) => {
+    const endpoint = s.endpoint === DEFAULT_ENDPOINTS[s.provider] ? DEFAULT_ENDPOINTS[provider] : s.endpoint;
+    set({ provider, endpoint });
+  };
 
   return (
     <div className="panel settings">
@@ -124,14 +138,21 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
             <input type="radio" checked={s.transport === "companion"} onChange={() => set({ transport: "companion" })} /> Companion (recommended)
           </label>
           <label className="radio">
-            <input type="radio" checked={s.transport === "direct"} onChange={() => set({ transport: "direct" })} /> Ollama directly
+            <input type="radio" checked={s.transport === "direct"} onChange={() => set({ transport: "direct" })} /> Direct
           </label>
         </div>
+        <Field label="Local model app" hint="Atomic Chat is the default. Both options run on this computer.">
+          <select value={s.provider} onChange={(e) => changeProvider(e.target.value as LocalProviderKind)}>
+            <option value="openai">Atomic Chat (OpenAI-compatible)</option>
+            <option value="ollama">Ollama</option>
+          </select>
+        </Field>
         {s.transport === "companion" ? (
           <>
             <Field label="Companion URL">
               <input value={s.companionUrl} onChange={(e) => set({ companionUrl: e.target.value })} />
             </Field>
+            <p className="small muted">The companion forwards to {PROVIDER_LABEL[s.provider]} on this computer.</p>
             {companion.paired ? (
               <div className="row between">
                 <span className="small">Paired with this companion.</span>
@@ -158,8 +179,15 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
           </>
         ) : (
           <>
-            <Field label="Ollama endpoint" hint="Ollama must allow this add-in's origin (OLLAMA_ORIGINS).">
-              <input value={s.ollamaEndpoint} onChange={(e) => set({ ollamaEndpoint: e.target.value })} />
+            <Field
+              label="Model endpoint"
+              hint={
+                s.provider === "openai"
+                  ? "The OpenAI-compatible base URL, e.g. http://127.0.0.1:1337/v1"
+                  : "Ollama must allow this add-in's origin (OLLAMA_ORIGINS)."
+              }
+            >
+              <input value={s.endpoint} onChange={(e) => set({ endpoint: e.target.value })} />
             </Field>
             {endpointRemote && (
               <label className="check warn">
@@ -192,13 +220,17 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
           <button onClick={loadModels}>Refresh</button>
         </div>
         {modelErr && <p className="err small">{modelErr}</p>}
-        {models?.length === 0 && <p className="small">No models installed. Install one below or with <code>ollama pull llama3.1:8b</code>.</p>}
-        {details && (
-          <p className="small muted">
-            Context window {details.contextLength?.toLocaleString() ?? "unknown"} tokens · {details.capabilities.includes("tools") ? "native tool calling" : "no native tools (text protocol will be used)"}
+        {models?.length === 0 && (
+          <p className="small">
+            No models found. {s.provider === "openai" ? "Open and load a model in Atomic Chat, then Refresh." : <>Install one below or with <code>ollama pull llama3.1:8b</code>.</>}
           </p>
         )}
-        {s.transport === "companion" && companion.paired && (
+        {details && (
+          <p className="small muted">
+            {details.contextLength ? `Context window ${details.contextLength.toLocaleString()} tokens` : "Context window set by the model app"} · {details.capabilities.includes("tools") ? "native tool calling" : "no native tools (text protocol will be used)"}
+          </p>
+        )}
+        {s.transport === "companion" && companion.paired && s.provider === "ollama" && (
           <details>
             <summary className="small">Install a model…</summary>
             <div className="row gap">
@@ -309,7 +341,9 @@ export function SettingsView({ settings: s, setSettings, companion, conn, onPair
       <section>
         <h3>Privacy</h3>
         <ul className="small privacy">
-          <li>Document content is sent only to the model endpoint shown above{s.transport === "companion" ? " (via the companion on this computer)" : ""}. {endpointRemote ? <b>This endpoint is NOT on this computer.</b> : "It is on this computer."}</li>
+          <li>
+            Document content is sent only to {PROVIDER_LABEL[s.provider]} at {s.transport === "companion" ? "the model app configured on this computer (via the companion)" : s.endpoint}. {endpointRemote ? <b>This endpoint is NOT on this computer.</b> : "It is on this computer."}
+          </li>
           <li>There is no cloud fallback. If the local model fails, the task fails.</li>
           <li>Office.js is loaded from Microsoft's CDN, as Office requires; it does not receive your content from this add-in.</li>
           <li>No telemetry is collected. Diagnostics never include document content.</li>

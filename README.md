@@ -1,14 +1,14 @@
 # Local Office AI
 
-A local-first AI assistant embedded in Microsoft Word, Excel, PowerPoint and Outlook. It reads the open document, workbook, deck or email, plans multi-step work, proposes changes for your approval, applies them through Office.js, and **verifies the result by reading Office state back** — all with models running on your own machine through [Ollama](https://ollama.com).
+A local-first AI assistant embedded in Microsoft Word, Excel, PowerPoint and Outlook. It reads the open document, workbook, deck or email, plans multi-step work, proposes changes for your approval, applies them through Office.js, and **verifies the result by reading Office state back** — all with models running on your own machine. The default local model app is **Atomic Chat** on `http://127.0.0.1:1337/v1`; Ollama is also supported.
 
 No account, no subscription, no cloud AI. If the local model fails, the task fails; there is no fallback.
 
 ```
-┌──────────── Office task pane (React + Office.js) ────────────┐        ┌─── Local companion (Node) ───┐      ┌──────────┐
-│ Chat · Context · Actions · History · Settings                 │ HTTPS  │ loopback only · paired token │ HTTP │  Ollama  │
-│ Agent runtime → Capability registry → Host adapter → Office   │───────▶│ Ollama allowlist proxy       │─────▶│ (local)  │
-│        ▲ approvals (you)        ▲ read-back verification      │        │ SQLite history & settings    │      └──────────┘
+┌──────────── Office task pane (React + Office.js) ────────────┐        ┌─── Local companion (Node) ───┐      ┌────────────┐
+│ Chat · Context · Actions · History · Settings                 │ HTTPS  │ loopback only · paired token │ HTTP │Atomic Chat │
+│ Agent runtime → Capability registry → Host adapter → Office   │───────▶│ local-model allowlist proxy  │─────▶│ (or Ollama)│
+│        ▲ approvals (you)        ▲ read-back verification      │        │ SQLite history & settings    │      └────────────┘
 └───────────────────────────────────────────────────────────────┘        └──────────────────────────────┘
 ```
 
@@ -39,11 +39,11 @@ The assistant **cannot send email**, run code, use the shell, read files, or rea
 
 ## Quick start (development)
 
-Requirements: Node.js ≥ 22.13, Ollama with at least one model (for example `ollama pull qwen2.5:7b`; any model can be selected, and none has been evaluated yet — see [docs/model-compatibility.md](docs/model-compatibility.md)), and Office desktop for live use.
+Requirements: Node.js ≥ 22.13, and a local model app on this machine — **Atomic Chat** on `http://127.0.0.1:1337/v1` by default (any OpenAI-compatible server works), or Ollama (for example `ollama pull qwen2.5:7b`). The model is discovered from the running app and selected automatically; none has been evaluated yet — see [docs/model-compatibility.md](docs/model-compatibility.md). Office desktop is required for live use.
 
 ```bash
 npm install
-npm test                     # 352 automated tests (unit, integration, specialists, security, invariant gates, acceptance scenarios on mocked hosts, evaluation harness, UI)
+npm test                     # 367 automated tests (unit, integration, specialists, security, invariant gates, acceptance scenarios on mocked hosts, evaluation harness, UI)
 npm run build                # core + companion + add-in + manifests
 
 npm run certs -w @loai/addin # once: trusted https://localhost certificate for Office
@@ -52,7 +52,7 @@ npm start                    # companion on https://localhost:47615, serves the 
 
 Sideload `packages/addin/dist/manifest.xml` into Word/Excel/PowerPoint ([Windows](https://learn.microsoft.com/office/dev/add-ins/testing/create-a-network-shared-folder-catalog-for-task-pane-and-content-add-ins), [Mac](https://learn.microsoft.com/office/dev/add-ins/testing/sideload-an-office-add-in-on-mac)) and `outlook-manifest.xml` into Outlook. Open **Home ▸ Assistant**, go to **Settings**, enter the pairing code, pick a model.
 
-**Hot-reload UI work:** `npm run dev:addin` serves the pane at https://localhost:3000 (use `manifest.dev.xml`). Open https://localhost:3000/taskpane.html in a normal browser to use **demo mode** — an in-memory Word document (`?demo=excel|powerpoint|outlook` for the others) driven by your real Ollama model.
+**Hot-reload UI work:** `npm run dev:addin` serves the pane at https://localhost:3000 (use `manifest.dev.xml`). Open https://localhost:3000/taskpane.html in a normal browser to use **demo mode** — an in-memory Word document (`?demo=excel|powerpoint|outlook` for the others) driven by your real local model.
 
 ## Installing a release
 
@@ -72,13 +72,13 @@ packages/core        Domain logic, no Office/DOM dependency — fully unit-testa
   src/permissions.ts   approval policy with non-negotiable floors
   src/runtime.ts       bounded agent loop: limits, retries, cancellation, honest outcomes
   src/context.ts       context budgeting, provenance, freshness, untrusted-content fencing
-  src/inference/       Ollama adapter (streaming, native tools) + text tool protocol fallback
+  src/inference/       Atomic Chat/OpenAI-compatible adapter + Ollama adapter (streaming, native tools) + text tool protocol fallback
   src/hosts/           Word / Excel / PowerPoint / Outlook adapters over driver interfaces
   src/specialists/     the 14 specialists, router, plans and plan scope, completion criteria
   src/acceptance/      live Office acceptance scenarios and runner (records live vs mocked)
   src/evals/           real-model evaluation cases, scoring, runner and reports
   src/testing/         in-memory Office hosts and a scripted model
-packages/companion   Loopback HTTPS service: pairing auth, Ollama allowlist proxy, SQLite history, CLI
+packages/companion   Loopback HTTPS service: pairing auth, local-model allowlist proxy, SQLite history, CLI
 packages/addin       React task pane, Office.js drivers, manifests
 acceptance/          Outlook fixture and committed live acceptance records
 evals/results/       committed real-model evaluation runs

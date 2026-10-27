@@ -14,7 +14,7 @@ die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 command -v node >/dev/null || die "Node.js 22.13 or newer is required (https://nodejs.org)."
 node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22||(a===22&&b>=13)?0:1)' \
   || die "Node.js $(node -v) is too old; 22.13 or newer is required."
-command -v ollama >/dev/null || say "Ollama was not found. Install it from https://ollama.com and pull a model, e.g. 'ollama pull qwen2.5:7b'."
+command -v ollama >/dev/null || say "Ollama was not found. The default local model app is Atomic Chat at http://127.0.0.1:1337/v1; Ollama is optional (https://ollama.com)."
 
 # 2. Integrity ----------------------------------------------------------------
 say "Verifying release files"

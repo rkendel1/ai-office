@@ -9,7 +9,7 @@
 | Malicious website | A page in the user's browser calls `https://localhost:47615` | Origin allowlist, pairing token, JSON-only writes, Host-header check |
 | DNS rebinding | `evil.test` resolves to 127.0.0.1 | Host header must be `localhost`/`127.0.0.1`/`[::1]` with the companion's port |
 | Other local processes | Another program calls the companion | Bearer token required (stored hashed); admin token in a 0600 file |
-| Accidental data exfiltration | Remote Ollama URL; cloud fallback | Non-loopback endpoints refused unless explicitly enabled with a disclosure; no fallback path exists |
+| Accidental data exfiltration | Remote model URL; cloud fallback | Non-loopback endpoints refused unless explicitly enabled with a disclosure; no fallback path exists |
 | Data at rest | History containing document text | History stores references and ≤160-character excerpts by default; compensation data never persisted; one-click clear (with `VACUUM`) |
 
 ## Enforcement points
@@ -48,11 +48,11 @@
 - Pairing: 8-character one-time code, 10-minute expiry, invalidated after 5 wrong attempts; exchanged for a 256-bit token stored as SHA-256.
 - Admin token (for the CLI) lives in a 0600 file; never sent to the browser.
 - `application/json` required for request bodies; 4 MB body limit; route allowlist; path-traversal-safe static serving.
-- Ollama proxy forwards only `version`, `tags`, `show`, `chat`. Model downloads require an explicit `confirm: true` from the Settings UI.
+- The local-model proxy forwards only the endpoints each protocol needs: `models` and `chat/completions` for Atomic Chat/OpenAI-compatible apps, or `version`, `tags`, `show` and `chat` for Ollama. Model downloads require an explicit `confirm: true` from the Settings UI and are available for Ollama only.
 
 ## Privacy guarantees
 
-- Document content is sent only to the configured model endpoint. By default that is Ollama on loopback, reached directly or via the companion; both refuse non-loopback URLs unless the user explicitly opts in.
+- Document content is sent only to the configured model endpoint. By default that is Atomic Chat on `http://127.0.0.1:1337/v1`; Ollama on loopback is also supported. Both direct and companion transports refuse non-loopback URLs unless the user explicitly opts in.
 - There is no cloud provider and no fallback code path.
 - No telemetry. Diagnostics run a fixed test prompt ("Reply with exactly: OK") and never include document content.
 - Office.js is loaded from Microsoft's CDN, as required for Office add-ins. The add-in does not send document content to it.

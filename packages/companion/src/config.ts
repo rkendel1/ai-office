@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { LocalProviderKind } from "@loai/core";
 
 export interface CompanionConfig {
   /** Directory for config, token, database. */
@@ -8,10 +9,16 @@ export interface CompanionConfig {
   /** Interface to bind. Loopback only unless explicitly overridden. */
   bindHost: string;
   port: number;
-  /** Ollama base URL. */
-  ollamaUrl: string;
-  /** Allow a non-loopback Ollama URL. Off by default. */
-  allowRemoteOllama: boolean;
+  /** Local model app base URL (Atomic Chat by default, or Ollama). */
+  llmUrl: string;
+  /** API language of the local model app. */
+  provider: LocalProviderKind;
+  /** Allow a non-loopback model URL. Off by default. */
+  allowRemoteLlm: boolean;
+  /** @deprecated Use llmUrl. Kept so older config files and callers still work. */
+  ollamaUrl?: string;
+  /** @deprecated Use allowRemoteLlm. */
+  allowRemoteOllama?: boolean;
   /** Browser origins allowed to call the API (the add-in's origin). */
   allowedOrigins: string[];
   tlsCertPath?: string;
@@ -47,12 +54,34 @@ export function loadConfig(overrides: Partial<CompanionConfig> = {}): CompanionC
   }
   const devCerts = path.join(os.homedir(), ".office-addin-dev-certs");
   const port = Number(overrides.port ?? fromFile.port ?? process.env.LOAI_PORT ?? DEFAULT_PORT);
+
+  // `ollamaUrl` is the pre-Atomic-Chat name for the same setting. An explicit
+  // legacy value keeps the Ollama protocol; new installs default to Atomic Chat.
+  const legacyUrl = overrides.ollamaUrl ?? fromFile.ollamaUrl;
+  const envOllamaUrl = process.env.OLLAMA_HOST_URL;
+  const llmUrl =
+    overrides.llmUrl ??
+    legacyUrl ??
+    fromFile.llmUrl ??
+    process.env.LOAI_LLM_URL ??
+    process.env.ATOMIC_CHAT_URL ??
+    envOllamaUrl ??
+    "http://127.0.0.1:1337/v1";
+  const rawProvider = overrides.provider ?? fromFile.provider ?? process.env.LOAI_LLM_PROVIDER;
+  const provider: LocalProviderKind =
+    rawProvider === "ollama" || rawProvider === "openai"
+      ? rawProvider
+      : legacyUrl || (!fromFile.llmUrl && envOllamaUrl)
+        ? "ollama"
+        : "openai";
+
   const cfg: CompanionConfig = {
     home,
     bindHost: overrides.bindHost ?? fromFile.bindHost ?? "127.0.0.1",
     port,
-    ollamaUrl: overrides.ollamaUrl ?? fromFile.ollamaUrl ?? process.env.OLLAMA_HOST_URL ?? "http://127.0.0.1:11434",
-    allowRemoteOllama: overrides.allowRemoteOllama ?? fromFile.allowRemoteOllama ?? false,
+    llmUrl,
+    provider,
+    allowRemoteLlm: overrides.allowRemoteLlm ?? overrides.allowRemoteOllama ?? fromFile.allowRemoteLlm ?? fromFile.allowRemoteOllama ?? false,
     allowedOrigins: overrides.allowedOrigins ??
       fromFile.allowedOrigins ?? [`https://localhost:${port}`, "https://localhost:3000"],
     tlsCertPath: "tlsCertPath" in overrides ? overrides.tlsCertPath : (fromFile.tlsCertPath ?? existing(path.join(devCerts, "localhost.crt"))),

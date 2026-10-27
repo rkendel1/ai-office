@@ -31,7 +31,7 @@ beforeAll(async () => {
   globalThis.fetch = ((u: any, init: any = {}) => nodeFetch(u, { ...init, signal: undefined })) as typeof fetch;
   Element.prototype.scrollIntoView = () => {};
   localStorage.setItem("loai.companionToken", token);
-  localStorage.setItem("loai.settings", JSON.stringify({ transport: "companion", companionUrl: companion.url, model: "llama3.1:8b" }));
+  localStorage.setItem("loai.settings", JSON.stringify({ transport: "companion", provider: "ollama", companionUrl: companion.url, model: "llama3.1:8b" }));
 });
 
 afterAll(async () => {
