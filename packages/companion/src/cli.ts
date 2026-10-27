@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { loadAdminToken } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { CompanionStore } from "./store.js";
-import { VERSION, readAcceptanceRecords, startCompanion } from "./server.js";
+import { VERSION, readAcceptanceRecords, startCompanion, type Companion } from "./server.js";
 import { ACCEPTANCE_SCENARIOS, acceptanceMatrix } from "@loai/core";
 import { evalMatrix, readEvalRuns, runModelEvaluation } from "./evals.js";
 
@@ -83,6 +83,49 @@ function admin(pathname: string, method = "GET"): Promise<any> {
   });
 }
 
+/**
+ * Identify a companion already listening on this port. Its health endpoint is
+ * unauthenticated, which makes it safe to probe before deciding how to report
+ * an EADDRINUSE error.
+ */
+function probeRunningCompanion(
+  port: number,
+  cfg: { tlsCertPath?: string; tlsKeyPath?: string },
+): Promise<{ url: string; version?: string } | undefined> {
+  const tls = !!(cfg.tlsCertPath && cfg.tlsKeyPath && fs.existsSync(cfg.tlsCertPath) && fs.existsSync(cfg.tlsKeyPath));
+  const mod = tls ? https : http;
+  const scheme = tls ? "https" : "http";
+  return new Promise((resolve) => {
+    const req = mod.get(
+      {
+        host: "127.0.0.1",
+        port,
+        path: "/v1/health",
+        timeout: 1500,
+        ...(tls
+          ? { ca: [caFor(cfg.tlsCertPath!), fs.readFileSync(cfg.tlsCertPath!)], servername: "localhost" }
+          : {}),
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try {
+            const body = JSON.parse(data);
+            if (body?.ok === true && body?.service === "local-office-ai-companion")
+              resolve({ url: `${scheme}://localhost:${port}`, version: typeof body.version === "string" ? body.version : undefined });
+            else resolve(undefined);
+          } catch {
+            resolve(undefined);
+          }
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => resolve(undefined));
+  });
+}
+
 async function main() {
   const cmd = process.argv[2] ?? "help";
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -96,7 +139,30 @@ async function main() {
         ...(arg("--ollama") ? { llmUrl: arg("--ollama"), provider: "ollama" as const } : {}),
         staticDir: arg("--static") ?? (fs.existsSync(defaultStatic) ? defaultStatic : undefined),
       });
-      const c = await startCompanion(cfg);
+      let c: Companion;
+      try {
+        c = await startCompanion(cfg);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE") throw e;
+        const altPort = cfg.port === 65535 ? 47616 : cfg.port + 1;
+        const running = await probeRunningCompanion(cfg.port, cfg);
+        if (running) {
+          console.log(`A Local Office AI companion${running.version ? ` ${running.version}` : ""} is already running at ${running.url}.`);
+          console.log("The installed app starts its companion at login, so this development build was not started.");
+          if (process.platform === "darwin") {
+            console.log("Stop the installed companion for this login session, then run this command again:");
+            console.log("  launchctl bootout gui/$(id -u)/ai.localoffice.companion");
+          } else {
+            console.log("Stop the installed companion, then run this command again.");
+          }
+          console.log(`Or start this build on another port: npm start -- --port ${altPort}`);
+          break;
+        }
+        console.error(`Port ${cfg.port} is already in use by another process.`);
+        console.error(`Stop that process, or start this build on another port: npm start -- --port ${altPort}`);
+        process.exitCode = 1;
+        break;
+      }
       console.log(`Local Office AI companion ${VERSION}`);
       console.log(`  Listening:  ${c.url} (loopback only)`);
       console.log(`  Model app:  ${cfg.provider === "ollama" ? "Ollama" : "Atomic Chat (OpenAI-compatible)"} at ${cfg.llmUrl}`);

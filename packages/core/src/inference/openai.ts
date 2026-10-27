@@ -47,6 +47,19 @@ interface OpenAIMessage {
  * Adapter for OpenAI-compatible local servers. Atomic Chat is the default; it
  * also works with llama.cpp's server, LM Studio and Ollama's /v1 API.
  */
+const SIZE_BOUNDS = new Set(["minItems", "maxItems", "minLength", "maxLength"]);
+
+/**
+ * llama.cpp turns tool schemas into a sampling grammar and expands size bounds
+ * into explicit rules, so large limits (e.g. maxItems: 2000) make the grammar
+ * unparseable (HTTP 400). Limits are still enforced when a call is validated.
+ */
+export function stripBounds(schema: unknown): any {
+  if (Array.isArray(schema)) return schema.map(stripBounds);
+  if (!schema || typeof schema !== "object") return schema;
+  return Object.fromEntries(Object.entries(schema).filter(([k]) => !SIZE_BOUNDS.has(k)).map(([k, v]) => [k, stripBounds(v)]));
+}
+
 export class OpenAIProvider implements InferenceProvider {
   readonly id = "openai";
   private readonly base: string;
@@ -173,7 +186,7 @@ export class OpenAIProvider implements InferenceProvider {
       messages: req.messages.map(toOpenAIMessage),
       ...(req.tools?.length
         ? {
-            tools: req.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })),
+            tools: req.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: stripBounds(t.parameters) } })),
             tool_choice: "auto",
           }
         : {}),

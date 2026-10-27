@@ -16,6 +16,7 @@ Start with **Settings ▸ Run diagnostics** in the task pane. It tests the selec
 | Add-in does not appear (Mac) | Manifest not in `wef` folder or Office not restarted | Re-run `install.sh`; quit Office fully (Cmd+Q) |
 | Add-in does not appear (Windows) | Developer registry key missing, or Office policy blocks sideloading | Re-run `install.ps1`; or use a shared-folder catalog |
 | "Direct" mode fails with CORS errors | Ollama does not allow the add-in origin | Use the companion, or set `OLLAMA_ORIGINS=https://localhost:3000,https://localhost:47615` and restart Ollama |
+| `EADDRINUSE: 127.0.0.1:47615` when running `npm start` | The installed app's companion is already running (it starts at login) | `launchctl bootout gui/$(id -u)/ai.localoffice.companion` on macOS, or run this build on another port: `npm start -- --port 47616` |
 
 ## Logs and data
 

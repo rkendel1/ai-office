@@ -49,7 +49,13 @@ export async function runAcceptance<D>(sc: AcceptanceScenario<D>, o: RunOptions<
     const session = createSession({ adapter: o.adapter, provider, approver: async (req) => sc.approve(req), settings: () => settings, history: new MemoryHistoryStore() });
     const specialist = sc.specialist ? session.specialists.get(sc.specialist) : undefined;
     const report: TaskReport = await session.runtime.run(sc.request, { specialist });
-    const checks = await sc.checks(ctx, report);
+    let checks: AcceptanceRecord["checks"];
+    try {
+      checks = await sc.checks(ctx, report);
+    } catch (e) {
+      // The checks read the state the task was meant to create; a missing sheet/range means the task did not produce it.
+      checks = [{ id: "checks-ran", description: "Automated checks could read the expected result", passed: false, evidence: `${errorMessage(e)} — the task did not produce what the scenario expects. Task outcome: ${report.outcome}. ${report.errors?.length ? `Errors: ${report.errors.join(" | ")}. ` : ""}${report.executionSummary ?? ""}`.trim() }];
+    }
 
     const render = report.actions.filter((a) => a.capability === "presentation.check_rendering").at(-1);
     const ro = render?.output as Record<string, any> | undefined;

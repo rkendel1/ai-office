@@ -361,10 +361,17 @@ export async function startCompanion(cfg: CompanionConfig, opts: { log?: (msg: s
   server.requestTimeout = 0; // model calls can be long; per-request limits are enforced by the add-in
   server.headersTimeout = 30_000;
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(cfg.port, cfg.bindHost, () => resolve());
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(cfg.port, cfg.bindHost, () => resolve());
+    });
+  } catch (e) {
+    // The port was taken (usually the installed companion). Release the store
+    // so the process can exit and the CLI can explain what to do.
+    store.close();
+    throw e;
+  }
   const port = (server.address() as AddressInfo).port;
   for (const h of ["localhost", "127.0.0.1", "[::1]"]) allowedHosts.add(`${h}:${port}`);
   // When serving its own add-in, the companion's origin is always allowed.

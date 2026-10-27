@@ -19,7 +19,7 @@
     "test:watch": "vitest",
     "dev:addin": "npm run dev -w @loai/addin",
     "dev:companion": "npm run dev -w @loai/companion",
-    "start": "npm run start -w @loai/companion",
+    "start": "node --no-warnings packages/companion/dist/cli.js start",
     "pair": "npm run pair -w @loai/companion --silent",
     "validate:manifests": "npm run validate -w @loai/addin",
     "package": "node scripts/package-release.mjs",

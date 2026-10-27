@@ -50,6 +50,8 @@ npm run certs -w @loai/addin # once: trusted https://localhost certificate for O
 npm start                    # companion on https://localhost:47615, serves the built add-in, prints a pairing code
 ```
 
+If the installed app is already running, its login companion owns port 47615 and `npm start` will say so instead of failing. Stop it for this session with `launchctl bootout gui/$(id -u)/ai.localoffice.companion` (macOS), or run this build on another port with `npm start -- --port 47616`.
+
 Sideload `packages/addin/dist/manifest.xml` into Word/Excel/PowerPoint ([Windows](https://learn.microsoft.com/office/dev/add-ins/testing/create-a-network-shared-folder-catalog-for-task-pane-and-content-add-ins), [Mac](https://learn.microsoft.com/office/dev/add-ins/testing/sideload-an-office-add-in-on-mac)) and `outlook-manifest.xml` into Outlook. Open **Home ▸ Assistant**, go to **Settings**, enter the pairing code, pick a model.
 
 **Hot-reload UI work:** `npm run dev:addin` serves the pane at https://localhost:3000 (use `manifest.dev.xml`). Open https://localhost:3000/taskpane.html in a normal browser to use **demo mode** — an in-memory Word document (`?demo=excel|powerpoint|outlook` for the others) driven by your real local model.
